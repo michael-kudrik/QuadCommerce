@@ -1,0 +1,122 @@
+:root {
+  --bg: #f6f7fb;
+  --bg-elev: #ffffff;
+  --text: #16181d;
+  --muted: #5f6472;
+  --border: #e6e8ef;
+  --accent: #6d5efc;
+  --accent-2: #22c55e;
+  --chip: #f1f3ff;
+  --shadow: 0 10px 30px rgba(18, 22, 33, 0.08);
+}
+
+[data-theme="dark"] {
+  --bg: #0f1117;
+  --bg-elev: #171a23;
+  --text: #f2f4f8;
+  --muted: #a3a8b7;
+  --border: #2a3040;
+  --accent: #8b7cff;
+  --accent-2: #37d67a;
+  --chip: #1f2432;
+  --shadow: 0 16px 36px rgba(0, 0, 0, 0.35);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  background: radial-gradient(1200px 600px at 20% -10%, rgba(109,94,252,0.18), transparent),
+              radial-gradient(1000px 500px at 100% 0%, rgba(34,197,94,0.12), transparent),
+              var(--bg);
+  color: var(--text);
+}
+
+.container { max-width: 1040px; margin: 2rem auto; padding: 0 1rem 2rem; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+.title { margin: 0; font-size: 1.8rem; }
+.subtitle { margin: .35rem 0 0; color: var(--muted); display:flex; gap:.35rem; align-items:center; }
+
+.btn {
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text);
+  padding: .55rem .9rem;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: transform .18s ease, box-shadow .2s ease, opacity .2s ease;
+}
+.btn:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
+.btn:active { transform: translateY(0); }
+.btn.icon { display:flex; align-items:center; gap:.4rem; }
+.btn.primary {
+  border: none;
+  background: linear-gradient(135deg, var(--accent), #4f7cff);
+  color: white;
+  font-weight: 600;
+}
+
+.grid { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+@media (min-width: 960px) { .grid { grid-template-columns: 360px 1fr; } }
+
+.card {
+  background: color-mix(in oklab, var(--bg-elev) 88%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1rem;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(6px);
+}
+.floaty { animation: floatIn .5s ease; }
+@keyframes floatIn { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: translateY(0);} }
+
+.form { display: grid; gap: .65rem; }
+.input, .select, .textarea {
+  width: 100%; border: 1px solid var(--border); background: var(--bg-elev); color: var(--text);
+  border-radius: 10px; padding: .65rem .75rem;
+}
+.textarea { min-height: 84px; resize: vertical; }
+
+.listingCard { animation: cardIn .35s ease both; }
+@keyframes cardIn { from { opacity: 0; transform: translateY(6px) scale(.995);} to { opacity:1; transform:translateY(0) scale(1);} }
+.listingHeader { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+.categoryLine { display:flex; gap:.35rem; align-items:center; color:var(--muted); text-transform:capitalize; }
+
+.badge { padding: .25rem .55rem; border-radius: 999px; font-size: .75rem; background: var(--chip); border: 1px solid var(--border); }
+.badge.open { color: #2563eb; }
+.badge.sold { color: var(--accent-2); }
+.badge.closed { color: #f59e0b; }
+
+.meta { color: var(--muted); font-size: .9rem; margin: .35rem 0; }
+.offerRow {
+  display: flex; align-items: center; justify-content: space-between;
+  border: 1px solid var(--border); border-radius: 10px; padding: .45rem .6rem; margin-bottom: .45rem; background: var(--bg-elev);
+}
+.offerLeft { display: flex; gap: .4rem; align-items: center; }
+.offerAmount { font-weight: 700; }
+
+.muted { color: var(--muted); }
+.pill { background: var(--chip); border: 1px solid var(--border); border-radius: 999px; padding: .2rem .55rem; font-size: .75rem; text-decoration: none; color: var(--text); }
+.pill.active { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 25%, transparent); }
+.row { display: flex; gap: .6rem; flex-wrap: wrap; }
+
+.skeleton {
+  border-radius: 10px;
+  background: linear-gradient(90deg, color-mix(in oklab, var(--chip) 70%, transparent), color-mix(in oklab, var(--chip) 95%, transparent), color-mix(in oklab, var(--chip) 70%, transparent));
+  background-size: 200% 100%;
+  animation: shimmer 1.2s infinite linear;
+  margin-bottom: .55rem;
+}
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.h24 { height: 24px; }
+.h16 { height: 16px; }
+.w60 { width: 60%; }
+.w70 { width: 70%; }
+.w90 { width: 90%; }
+.w100 { width: 100%; }
+
+.emptyState { text-align: center; padding: 2rem 1rem; }
+.emptyIcon {
+  width: 52px; height: 52px; margin: 0 auto .6rem; border-radius: 50%;
+  display: grid; place-items: center; background: var(--chip); border: 1px solid var(--border);
+}

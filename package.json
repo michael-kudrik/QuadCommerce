@@ -1,0 +1,16 @@
+{
+  "name": "quadcommerce",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @quadcommerce/api & npm run dev -w @quadcommerce/web",
+    "dev:api": "npm run dev -w @quadcommerce/api",
+    "dev:web": "npm run dev -w @quadcommerce/web",
+    "build": "npm run build -ws",
+    "lint": "echo 'lint not configured yet'"
+  }
+}
