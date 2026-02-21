@@ -67,13 +67,15 @@ export function App() {
 
 function TopNav({ me, logout, theme, setTheme }: { me: User | null; logout: () => void; theme: "light"|"dark"; setTheme: (t: "light"|"dark") => void }) {
   const loc = useLocation();
-  const links = [
-    ["/", "Dashboard"],
-    ["/profile", "Profile"],
-    ["/services", "Services"],
-    ["/chats", "Chats"],
-    ["/sell", "Sell"]
-  ] as const;
+  const links = me
+    ? ([
+        ["/", "Dashboard"],
+        ["/profile", "Profile"],
+        ["/services", "Services"],
+        ["/chats", "Chats"],
+        ["/sell", "Sell"]
+      ] as const)
+    : ([] as const);
 
   return (
     <header className="card" style={{ marginBottom: 12 }}>
@@ -138,6 +140,7 @@ function RegisterPage({ setToken, setMe }: { setToken: (t: string) => void; setM
 }
 
 function AuthCard({ title, onSubmit, err, includeName }: { title: string; onSubmit: (e: FormEvent<HTMLFormElement>) => void; err: string; includeName: boolean }) {
+  const isRegister = includeName;
   return (
     <section className="card" style={{ maxWidth: 440, margin: "30px auto" }}>
       <h2>{title}</h2>
@@ -154,26 +157,34 @@ function AuthCard({ title, onSubmit, err, includeName }: { title: string; onSubm
         <button className="btn primary" type="submit">Continue</button>
       </form>
       {err ? <p className="muted" style={{ color: "#ef4444" }}>{err}</p> : null}
+      <p className="meta" style={{ marginTop: 10 }}>
+        {isRegister ? <>Already have an account? <Link to="/login">Login</Link></> : <>Need an account? <Link to="/register">Register</Link></>}
+      </p>
     </section>
   );
 }
 
 function DashboardPage({ token }: { token: string }) {
-  const [listings, setListings] = useState<Listing[]>([]);
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [stats, setStats] = useState<{ listingsCount: number; soldCount: number; totalOffers: number; appointmentsCount: number; servicesCount: number } | null>(null);
+
   useEffect(() => {
-    fetch(`${API}/listings`).then(r => r.json()).then(setListings);
-    fetch(`${API}/appointments`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()).then(setAppointments);
+    fetch(`${API}/dashboard`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((d) => setStats(d.stats));
   }, [token]);
-  const totalOffers = useMemo(() => listings.reduce((a, l) => a + l.offers.length, 0), [listings]);
+
   return (
     <section className="card">
       <h2>Dashboard</h2>
-      <div className="row">
-        <span className="pill">Listings: {listings.length}</span>
-        <span className="pill">Offers: {totalOffers}</span>
-        <span className="pill">Appointments: {appointments.length}</span>
-      </div>
+      {!stats ? <p className="muted">Loading dashboard…</p> : (
+        <div className="row">
+          <span className="pill">Listings: {stats.listingsCount}</span>
+          <span className="pill">Sold: {stats.soldCount}</span>
+          <span className="pill">Offers: {stats.totalOffers}</span>
+          <span className="pill">Appointments: {stats.appointmentsCount}</span>
+          <span className="pill">Services: {stats.servicesCount}</span>
+        </div>
+      )}
     </section>
   );
 }
@@ -289,6 +300,7 @@ function ServicesPage({ token, me }: { token: string; me: User | null }) {
 
 function ChatsPage({ token }: { token: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [activeConversation, setActiveConversation] = useState<string>("all");
   const [text, setText] = useState("");
 
   useEffect(() => {
@@ -297,6 +309,21 @@ function ChatsPage({ token }: { token: string }) {
     socket.on("chat:new", onNew);
     return () => { socket.off("chat:new", onNew); };
   }, [token]);
+
+  const conversations = useMemo(() => {
+    const map = new Map<string, ChatMessage[]>();
+    for (const m of messages) {
+      const key = m.senderEmail;
+      const existing = map.get(key) || [];
+      existing.push(m);
+      map.set(key, existing);
+    }
+    return [{ id: "all", label: "All messages", preview: `${messages.length} total`, messages },
+      ...[...map.entries()].map(([email, msgs]) => ({ id: email, label: msgs[msgs.length - 1]?.senderName || email, preview: msgs[msgs.length - 1]?.text || "", messages: msgs }))
+    ];
+  }, [messages]);
+
+  const active = conversations.find((c) => c.id === activeConversation) || conversations[0];
 
   async function send(e: FormEvent) {
     e.preventDefault();
@@ -310,17 +337,41 @@ function ChatsPage({ token }: { token: string }) {
   }
 
   return (
-    <section className="card">
-      <h2>Chats</h2>
-      <div style={{ maxHeight: 320, overflow: "auto", border: "1px solid var(--border)", borderRadius: 10, padding: 10, marginBottom: 10 }}>
-        {messages.map((m) => (
-          <p key={m.id} style={{ margin: "0 0 8px" }}><strong>{m.senderName}</strong>: {m.text}</p>
-        ))}
+    <section className="card" style={{ padding: 0, overflow: "hidden" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", minHeight: 520 }}>
+        <aside style={{ borderRight: "1px solid var(--border)", padding: 12 }}>
+          <h3 style={{ marginTop: 0 }}>Conversations</h3>
+          <input className="input" placeholder="Search (coming soon)" style={{ marginBottom: 10 }} readOnly />
+          <div style={{ display: "grid", gap: 6 }}>
+            {conversations.map((c) => (
+              <button key={c.id} className="btn" style={{ textAlign: "left", background: c.id === active?.id ? "var(--chip)" : "var(--bg-elev)" }} onClick={() => setActiveConversation(c.id)}>
+                <div><strong>{c.label}</strong></div>
+                <div className="meta" style={{ margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.preview}</div>
+              </button>
+            ))}
+          </div>
+        </aside>
+
+        <div style={{ display: "grid", gridTemplateRows: "56px 1fr auto" }}>
+          <header style={{ borderBottom: "1px solid var(--border)", padding: "12px 14px", display: "flex", alignItems: "center" }}>
+            <strong>{active?.label || "Conversation"}</strong>
+          </header>
+
+          <div style={{ overflow: "auto", padding: 14 }}>
+            {(active?.messages || []).map((m) => (
+              <p key={m.id} style={{ margin: "0 0 10px" }}>
+                <strong>{m.senderName}</strong>: {m.text}
+              </p>
+            ))}
+            {(active?.messages || []).length === 0 ? <p className="muted">No messages yet.</p> : null}
+          </div>
+
+          <form onSubmit={send} className="row" style={{ padding: 12, borderTop: "1px solid var(--border)" }}>
+            <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder="Message…" />
+            <button className="btn primary" type="submit">Send</button>
+          </form>
+        </div>
       </div>
-      <form onSubmit={send} className="row">
-        <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder="Type a message" />
-        <button className="btn primary" type="submit">Send</button>
-      </form>
     </section>
   );
 }

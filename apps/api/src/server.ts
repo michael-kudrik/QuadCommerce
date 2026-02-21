@@ -300,6 +300,25 @@ app.patch("/api/me", auth, async (req, res) => {
   return res.json({ id: user._id.toString(), name: user.name, email: user.email, role: user.role, schoolVerified: true });
 });
 
+app.get("/api/dashboard", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
+  const [listingsCount, soldCount, appointmentsCount, offersAgg, servicesCount] = await Promise.all([
+    Listing.countDocuments(),
+    Listing.countDocuments({ status: "SOLD" }),
+    user.role === "businessOwner"
+      ? Appointment.countDocuments({ businessOwnerId: user._id })
+      : Appointment.countDocuments({ customerUserId: user._id }),
+    Listing.aggregate([{ $unwind: "$offers" }, { $count: "total" }]),
+    user.role === "businessOwner" ? Service.countDocuments({ ownerId: user._id }) : Promise.resolve(0)
+  ]);
+
+  const totalOffers = offersAgg[0]?.total ?? 0;
+  return res.json({
+    user: { id: user._id.toString(), role: user.role },
+    stats: { listingsCount, soldCount, totalOffers, appointmentsCount, servicesCount }
+  });
+});
+
 // Reverse auction
 app.get("/api/listings", async (_req, res) => {
   const docs = await Listing.find().sort({ createdAt: -1 });
@@ -512,6 +531,12 @@ async function connectMongo() {
 
 async function start() {
   const uri = await connectMongo();
+  httpServer.on("error", (err: any) => {
+    if (err?.code === "EADDRINUSE") {
+      console.error(`Port ${port} already in use. Stop the other API process or change PORT.`);
+      process.exit(1);
+    }
+  });
   httpServer.listen(port, () => {
     console.log(`API running on http://localhost:${port}`);
     console.log(`Mongo connected: ${uri}`);
