@@ -15,6 +15,26 @@ Can you make an web app design plan that essentially, targets College students, 
 ### Prompt #1 (Technical Rephrase)
 Design a multi-tenant web platform for university ecosystems with two core modules: (1) a student-to-student marketplace for textbooks and dorm goods using a reverse-auction/offer-acceptance workflow, and (2) an SMB operations dashboard for student-run businesses that supports appointment scheduling, CRM-lite customer records, and analytics reporting. Provide product scope, system architecture, core data models, user flows, and an implementation roadmap.
 
+### Prompt #2 (Original)
+Answer these questions for URI hackathon:
+
+Inspiration
+
+What it does
+
+How we built it
+
+Challenges we ran into
+
+Accomplishments that we're proud of
+
+What we learned
+
+What's next for QuadCommerce
+
+### Prompt #2 (Technical Rephrase)
+Generate a hackathon project summary for QuadCommerce using the standard Devpost narrative structure: inspiration, functionality, implementation architecture, technical/product challenges, key accomplishments, lessons learned, and forward roadmap. Keep it concise, audience-friendly, and demo-oriented.
+
 ---
 
 ## Responses
@@ -112,3 +132,45 @@ Build a campus-focused platform with two integrated products:
 - **No-shows** → reminders, optional deposits, reliability scores
 - **Thin marketplace liquidity** → campus ambassadors + launch incentives
 - **Scope creep** → strict MVP gates and phased delivery
+
+### Response #2 — URI Hackathon Answers (QuadCommerce)
+
+#### Inspiration
+QuadCommerce was inspired by a problem we see every semester: students are stuck with expensive textbooks and dorm items they no longer need, while other students are looking for affordable options. At the same time, student-run businesses often manage bookings and customer info in scattered tools (or manually). We wanted one campus-first platform that supports both peer resale and student entrepreneurship.
+
+#### What it does
+QuadCommerce combines two products:
+1. **Campus Reverse Marketplace** — students list textbooks/dorm items and buyers place offers in a reverse-auction style flow, helping sellers quickly choose the best offer before a deadline.
+2. **Student Business Dashboard** — student entrepreneurs can manage appointments, customer records, and performance stats like revenue, repeat clients, and no-show rates.
+
+#### How we built it
+- Designed a **mobile-first web app** focused on college usage patterns.
+- Built core marketplace workflows: listing creation, offer submission, offer acceptance/rejection, and status tracking.
+- Built business workflows: service setup, calendar-style appointment management, and customer tracking.
+- Structured the app around modular components so marketplace and business features can evolve independently while sharing auth and user profiles.
+- Planned for secure scaling with role-based access and campus verification.
+
+#### Challenges we ran into
+- **Balancing two product experiences** in one platform without making the UX feel overloaded.
+- Designing a **reverse-auction flow** that is simple for first-time users.
+- Defining a clean data model that supports both C2C marketplace actions and SMB-style scheduling/CRM needs.
+- Prioritizing features under hackathon time constraints while still delivering a coherent end-to-end concept.
+
+#### Accomplishments that we're proud of
+- Created a clear, practical solution for real student pain points.
+- Shipped a unified concept that supports both student buyers/sellers and student business owners.
+- Built a strong product narrative with actionable MVP scope and growth roadmap.
+- Defined measurable KPIs (conversion, time-to-sale, bookings, retention) to evaluate real impact.
+
+#### What we learned
+- Campus tools need to be **extremely simple and fast** to drive adoption.
+- Trust and safety (verification, reputation, reporting) are foundational, not optional.
+- Building for two user groups works best when shared infrastructure (accounts, notifications, analytics) is designed early.
+- A focused MVP beats a bloated feature set, especially in early-stage product validation.
+
+#### What's next for QuadCommerce
+- Launch MVP pilots on a single campus and gather user feedback.
+- Add in-app messaging and smarter notification workflows.
+- Expand business analytics and appointment automation (reminders, cancellation handling).
+- Explore payments/escrow to reduce no-shows and increase transaction trust.
+- Scale to multi-campus rollout with ambassador-led growth and partnerships.
