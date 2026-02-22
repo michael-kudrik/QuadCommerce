@@ -45,6 +45,7 @@ interface AppointmentDoc extends mongoose.Document {
 
 interface ChatMessageDoc extends mongoose.Document {
   senderUserId: mongoose.Types.ObjectId;
+  recipientUserId: mongoose.Types.ObjectId;
   senderName: string;
   senderEmail: string;
   text: string;
@@ -104,6 +105,7 @@ const appointmentSchema = new Schema<AppointmentDoc>(
 const chatMessageSchema = new Schema<ChatMessageDoc>(
   {
     senderUserId: { type: Schema.Types.ObjectId, required: true, index: true },
+    recipientUserId: { type: Schema.Types.ObjectId, required: true, index: true },
     senderName: { type: String, required: true },
     senderEmail: { type: String, required: true },
     text: { type: String, required: true }
@@ -195,6 +197,13 @@ const chatMessageSchemaInput = z.object({
   text: z.string().min(1).max(1000)
 });
 
+const chatPeerParamSchema = z.object({
+  peerUserId: z
+    .string()
+    .min(1)
+    .refine((v) => mongoose.Types.ObjectId.isValid(v), "Invalid peer user id")
+});
+
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, { cors: { origin: "*" } });
@@ -211,7 +220,9 @@ function signToken(user: UserDoc) {
 }
 
 async function auth(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const token = req.header("authorization")?.replace("Bearer ", "") || "";
+  const authHeader = req.header("authorization") || "";
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  const token = match?.[1]?.trim() || "";
   if (!token) return res.status(401).json({ error: "Unauthorized" });
   try {
     const payload = jwt.verify(token, JWT_SECRET) as { sub: string };
@@ -257,7 +268,10 @@ app.post("/api/auth/register", async (req, res) => {
 
   const email = parsed.data.email.toLowerCase();
   const exists = await User.findOne({ email });
-  if (exists) return res.status(409).json({ error: "Email already registered" });
+  if (exists) { 
+    console.warn("Email already exists", { email });
+    return res.status(409).json({ error: "Email already registered" }); 
+  }
 
   const user = await User.create({
     name: parsed.data.name,
@@ -475,23 +489,95 @@ app.patch("/api/appointments/:id", auth, async (req, res) => {
   return res.json({ id: updated._id.toString(), status: updated.status });
 });
 
-// Global chat
-app.get("/api/chats", auth, async (_req, res) => {
-  const msgs = await ChatMessage.find().sort({ createdAt: -1 }).limit(100);
+// User-scoped direct chat
+app.get("/api/users", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
+  const users = await User.find({ _id: { $ne: user._id } }).sort({ name: 1 }).limit(200);
+  res.json(users.map((u) => ({ id: u._id.toString(), name: u.name, email: u.email, role: u.role })));
+});
+
+app.get("/api/chats/conversations", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
+  const uid = user._id;
+  const msgs = await ChatMessage.find({ $or: [{ senderUserId: uid }, { recipientUserId: uid }] })
+    .sort({ createdAt: -1 })
+    .limit(500);
+
+  const summaries = new Map<string, { peerUserId: string; lastText: string; lastAt: string; lastSenderName: string }>();
+  for (const m of msgs) {
+    // Guard against legacy chat rows created before recipientUserId existed.
+    if (!m.senderUserId || !m.recipientUserId) continue;
+
+    const senderId = m.senderUserId.toString();
+    const recipientId = m.recipientUserId.toString();
+    const myId = uid.toString();
+    const peer = senderId === myId ? recipientId : senderId;
+
+    if (!summaries.has(peer)) {
+      summaries.set(peer, {
+        peerUserId: peer,
+        lastText: m.text,
+        lastAt: m.createdAt.toISOString(),
+        lastSenderName: m.senderName
+      });
+    }
+  }
+
+  const peers = [...summaries.keys()].map((id) => new mongoose.Types.ObjectId(id));
+  const peerUsers = await User.find({ _id: { $in: peers } });
+  const peerMap = new Map(peerUsers.map((u) => [u._id.toString(), u]));
+
   res.json(
-    msgs
-      .reverse()
-      .map((m) => ({ id: m._id.toString(), senderUserId: m.senderUserId.toString(), senderName: m.senderName, senderEmail: m.senderEmail, text: m.text, createdAt: m.createdAt.toISOString() }))
+    [...summaries.values()].map((s) => ({
+      ...s,
+      peerName: peerMap.get(s.peerUserId)?.name || "Unknown",
+      peerEmail: peerMap.get(s.peerUserId)?.email || ""
+    }))
   );
 });
 
-app.post("/api/chats", auth, async (req, res) => {
+app.get("/api/chats/:peerUserId", auth, async (req, res) => {
   const user = (req as any).user as UserDoc;
+  const parsedPeer = chatPeerParamSchema.safeParse(req.params);
+  if (!parsedPeer.success) return res.status(400).json({ error: "Invalid peer user id" });
+  const peerId = new mongoose.Types.ObjectId(parsedPeer.data.peerUserId);
+
+  const msgs = await ChatMessage.find({
+    $or: [
+      { senderUserId: user._id, recipientUserId: peerId },
+      { senderUserId: peerId, recipientUserId: user._id }
+    ]
+  })
+    .sort({ createdAt: 1 })
+    .limit(500);
+
+  res.json(
+    msgs.map((m) => ({
+      id: m._id.toString(),
+      senderUserId: m.senderUserId.toString(),
+      recipientUserId: m.recipientUserId.toString(),
+      senderName: m.senderName,
+      senderEmail: m.senderEmail,
+      text: m.text,
+      createdAt: m.createdAt.toISOString()
+    }))
+  );
+});
+
+app.post("/api/chats/:peerUserId", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
+  const parsedPeer = chatPeerParamSchema.safeParse(req.params);
+  if (!parsedPeer.success) return res.status(400).json({ error: "Invalid peer user id" });
+
   const parsed = chatMessageSchemaInput.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
+  const peer = await User.findById(parsedPeer.data.peerUserId);
+  if (!peer) return res.status(404).json({ error: "Peer user not found" });
+
   const created = await ChatMessage.create({
     senderUserId: user._id,
+    recipientUserId: peer._id,
     senderName: user.name,
     senderEmail: user.email,
     text: parsed.data.text
@@ -500,13 +586,15 @@ app.post("/api/chats", auth, async (req, res) => {
   const payload = {
     id: created._id.toString(),
     senderUserId: created.senderUserId.toString(),
+    recipientUserId: created.recipientUserId.toString(),
     senderName: created.senderName,
     senderEmail: created.senderEmail,
     text: created.text,
     createdAt: created.createdAt.toISOString()
   };
 
-  io.emit("chat:new", payload);
+  io.to(`user:${user._id.toString()}`).emit("chat:new", payload);
+  io.to(`user:${peer._id.toString()}`).emit("chat:new", payload);
   res.status(201).json(payload);
 });
 
@@ -531,6 +619,13 @@ async function connectMongo() {
 
 async function start() {
   const uri = await connectMongo();
+
+  // Clean up legacy global-chat rows that do not have recipientUserId.
+  const cleanup = await ChatMessage.deleteMany({ recipientUserId: { $exists: false } as any });
+  if (cleanup.deletedCount) {
+    console.log(`Removed ${cleanup.deletedCount} legacy chat messages without recipientUserId`);
+  }
+
   httpServer.on("error", (err: any) => {
     if (err?.code === "EADDRINUSE") {
       console.error(`Port ${port} already in use. Stop the other API process or change PORT.`);
@@ -543,7 +638,18 @@ async function start() {
   });
 }
 
-io.on("connection", (socket) => socket.emit("connected", { ok: true }));
+io.on("connection", (socket) => {
+  const token = (socket.handshake.auth?.token || socket.handshake.query?.token || "") as string;
+  if (token) {
+    try {
+      const payload = jwt.verify(token, JWT_SECRET) as { sub: string };
+      socket.join(`user:${payload.sub}`);
+    } catch {
+      // ignore invalid token for socket room join
+    }
+  }
+  socket.emit("connected", { ok: true });
+});
 
 start().catch((err) => {
   console.error(err);

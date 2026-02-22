@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/main.tsx"],"version":"5.9.3"}
+{"root":["./src/App.tsx","./src/main.tsx","./src/types.ts","./src/components/AuthCard.tsx","./src/components/TopNav.tsx","./src/lib/config.ts","./src/pages/ChatsPage.tsx","./src/pages/DashboardPage.tsx","./src/pages/LoginPage.tsx","./src/pages/ProfilePage.tsx","./src/pages/RegisterPage.tsx","./src/pages/SellProductsPage.tsx","./src/pages/ServicesPage.tsx"],"version":"5.9.3"}
