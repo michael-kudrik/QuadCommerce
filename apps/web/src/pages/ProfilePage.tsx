@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { API } from "../lib/config";
 import { Role, User } from "../types";
+import { formatError } from "../lib/errors";
 import { 
   User as UserIcon, 
   ShieldCheck, 
@@ -38,8 +39,12 @@ export function ProfilePage({ token, me, setMe }: { token: string; me: User | nu
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ name, role })
       });
-      const u = await res.json();
-      setMe(u);
+      const data = await res.json();
+      if (!res.ok) {
+        setMsg(formatError(data?.error || "Failed to update profile."));
+        return;
+      }
+      setMe(data);
       setMsg("Profile updated successfully!");
     } catch {
       setMsg("Failed to update profile.");
