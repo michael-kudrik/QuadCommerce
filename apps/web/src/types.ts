@@ -33,12 +33,14 @@ export type Listing = {
 
 export type Service = {
   id: string;
+  ownerId?: string;
   name: string;
   description: string;
   durationMinutes: number;
   priceUsd: number;
   imageUrl?: string;
   isActive: boolean;
+  imageUrl?: string;
 };
 
 export type Appointment = {

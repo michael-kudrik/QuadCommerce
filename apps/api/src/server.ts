@@ -23,6 +23,7 @@ interface ServiceDoc extends mongoose.Document {
   ownerId: mongoose.Types.ObjectId;
   name: string;
   description: string;
+  imageUrl?: string;
   durationMinutes: number;
   priceUsd: number;
   isActive: boolean;
@@ -96,6 +97,7 @@ const serviceSchema = new Schema<ServiceDoc>(
     ownerId: { type: Schema.Types.ObjectId, required: true, index: true },
     name: { type: String, required: true },
     description: { type: String, required: true },
+    imageUrl: { type: String, required: false },
     durationMinutes: { type: Number, required: true },
     priceUsd: { type: Number, required: true },
     isActive: { type: Boolean, default: true }
@@ -209,6 +211,7 @@ const createOfferSchema = z.object({
 const createServiceSchema = z.object({
   name: z.string().min(2),
   description: z.string().min(5),
+  imageUrl: z.string().url().max(2000).optional().or(z.literal("")),
   durationMinutes: z.coerce.number().int().min(15).max(480),
   priceUsd: z.coerce.number().nonnegative()
 });
@@ -528,10 +531,9 @@ app.delete("/api/listings/:id", auth, async (req, res) => {
 });
 
 // Services (CRUD)
-app.get("/api/services", auth, async (req, res) => {
-  const user = (req as any).user as UserDoc;
-  const docs = await Service.find({ ownerId: user._id }).sort({ createdAt: -1 });
-  res.json(docs.map((d) => ({ id: d._id.toString(), name: d.name, description: d.description, durationMinutes: d.durationMinutes, priceUsd: d.priceUsd, isActive: d.isActive })));
+app.get("/api/services", auth, async (_req, res) => {
+  const docs = await Service.find({ isActive: true }).sort({ createdAt: -1 });
+  res.json(docs.map((d) => ({ id: d._id.toString(), ownerId: d.ownerId.toString(), name: d.name, description: d.description, imageUrl: d.imageUrl, durationMinutes: d.durationMinutes, priceUsd: d.priceUsd, isActive: d.isActive })));
 });
 
 app.post("/api/services", auth, async (req, res) => {
@@ -541,8 +543,8 @@ app.post("/api/services", auth, async (req, res) => {
   const parsed = createServiceSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const created = await Service.create({ ownerId: user._id, ...parsed.data, isActive: true });
-  return res.status(201).json({ id: created._id.toString(), name: created.name, description: created.description, durationMinutes: created.durationMinutes, priceUsd: created.priceUsd, isActive: created.isActive });
+  const created = await Service.create({ ownerId: user._id, ...parsed.data, imageUrl: parsed.data.imageUrl || undefined, isActive: true });
+  return res.status(201).json({ id: created._id.toString(), ownerId: created.ownerId.toString(), name: created.name, description: created.description, imageUrl: created.imageUrl, durationMinutes: created.durationMinutes, priceUsd: created.priceUsd, isActive: created.isActive });
 });
 
 app.patch("/api/services/:id", auth, async (req, res) => {
@@ -552,7 +554,7 @@ app.patch("/api/services/:id", auth, async (req, res) => {
 
   const updated = await Service.findOneAndUpdate({ _id: req.params.id, ownerId: user._id }, { $set: parsed.data }, { new: true });
   if (!updated) return res.status(404).json({ error: "Service not found" });
-  return res.json({ id: updated._id.toString(), name: updated.name, description: updated.description, durationMinutes: updated.durationMinutes, priceUsd: updated.priceUsd, isActive: updated.isActive });
+  return res.json({ id: updated._id.toString(), ownerId: updated.ownerId.toString(), name: updated.name, description: updated.description, imageUrl: updated.imageUrl, durationMinutes: updated.durationMinutes, priceUsd: updated.priceUsd, isActive: updated.isActive });
 });
 
 app.delete("/api/services/:id", auth, async (req, res) => {
@@ -570,6 +572,8 @@ app.delete("/api/services/:id", auth, async (req, res) => {
 // Appointments
 app.post("/api/appointments", auth, async (req, res) => {
   const user = (req as any).user as UserDoc;
+  if (user.role !== "student") return res.status(403).json({ error: "Only students can create appointments" });
+
   const parsed = createAppointmentSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
