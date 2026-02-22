@@ -2,13 +2,11 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { API } from "../lib/config";
 import { ChatMessage, ChatReadReceipt } from "../types";
-import { 
-  Search, 
-  Send, 
-  User as UserIcon, 
-  MoreVertical, 
-  Phone, 
-  Video, 
+import {
+  Search,
+  Send,
+  User as UserIcon,
+  MoreVertical,
   Info,
   Circle,
   MessageSquareOff
@@ -257,11 +255,9 @@ export function ChatsPage({ token, meUserId }: { token: string; meUserId: string
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-4 text-[var(--muted)]">
-                <button className="hover:text-[var(--accent)] transition-colors"><Phone size={20} /></button>
-                <button className="hover:text-[var(--accent)] transition-colors"><Video size={20} /></button>
-                <button className="hover:text-[var(--accent)] transition-colors"><Info size={20} /></button>
-                <button className="hover:text-[var(--accent)] transition-colors border-l border-[var(--border)] pl-4 ml-1"><MoreVertical size={20} /></button>
+              <div className="flex items-center gap-3 text-[var(--muted)]">
+                <button className="hover:text-[var(--accent)] transition-colors p-1"><Info size={20} /></button>
+                <button className="hover:text-[var(--accent)] transition-colors border-l border-[var(--border)] pl-3 ml-1"><MoreVertical size={20} /></button>
               </div>
             </header>
 
