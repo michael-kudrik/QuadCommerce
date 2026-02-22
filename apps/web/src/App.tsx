@@ -70,7 +70,7 @@ export function App() {
             <Route path="/profile" element={<RequireAuth token={token}><ProfilePage token={token} me={me} setMe={setMe} /></RequireAuth>} />
             <Route path="/services" element={<RequireAuth token={token}><ServicesPage token={token} me={me} /></RequireAuth>} />
             <Route path="/chats" element={<RequireAuth token={token}><ChatsPage token={token} meUserId={me?.id || ""} /></RequireAuth>} />
-            <Route path="/sell" element={<RequireAuth token={token}><SellProductsPage token={token} /></RequireAuth>} />
+            <Route path="/sell" element={<RequireAuth token={token}><SellProductsPage token={token} me={me} /></RequireAuth>} />
             <Route path="*" element={<Navigate to={token ? "/" : "/login"} replace />} />
           </Routes>
         </ErrorBoundary>

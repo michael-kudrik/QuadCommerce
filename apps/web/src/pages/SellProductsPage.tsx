@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState, useRef } from "react";
 import { io } from "socket.io-client";
 import { API } from "../lib/config";
 import { formatError } from "../lib/errors";
-import { Listing, Offer } from "../types";
+import { Listing, Offer, User } from "../types";
 import { 
   ShoppingBag, 
   Tag, 
@@ -40,7 +40,7 @@ function normalizeListing(raw: any): Listing | null {
   } as Listing;
 }
 
-export function SellProductsPage({ token }: { token: string }) {
+export function SellProductsPage({ token, me }: { token: string; me: User | null }) {
   const [listings, setListings] = useState<Listing[]>([]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -119,13 +119,13 @@ export function SellProductsPage({ token }: { token: string }) {
     }
   }
 
-  async function placeOffer(listingId: string, bidderName: string, amount: number) {
+  async function placeOffer(listingId: string, amount: number) {
     setError("");
     try {
       const res = await fetch(`${API}/listings/${listingId}/offers`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bidderName, amount })
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ amount })
       });
       if (!res.ok) {
         const body = await readJsonSafe(res);
@@ -147,6 +147,26 @@ export function SellProductsPage({ token }: { token: string }) {
       });
       if (!res.ok) throw new Error("Failed to accept");
       setSuccess("Sold!");
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
+  async function deleteListing(listingId: string) {
+    if (!confirm("Delete this listing? This cannot be undone.")) return;
+    setError("");
+    setSuccess("");
+    try {
+      const res = await fetch(`${API}/listings/${listingId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const body = await readJsonSafe(res);
+        throw new Error(formatError(body?.error || "Failed to delete listing"));
+      }
+      setSuccess("Listing deleted.");
+      await loadListings();
     } catch (err: any) {
       setError(err.message);
     }
@@ -243,7 +263,14 @@ export function SellProductsPage({ token }: { token: string }) {
 
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 gap-6">
           {listings.map((l) => (
-            <ListingCard key={l.id} listing={l} onPlaceOffer={placeOffer} onAccept={accept} />
+            <ListingCard
+              key={l.id}
+              listing={l}
+              onPlaceOffer={placeOffer}
+              onAccept={accept}
+              onDelete={deleteListing}
+              canManage={Boolean(me?.id && l.sellerUserId === me.id)}
+            />
           ))}
         </div>
       </main>
@@ -251,12 +278,13 @@ export function SellProductsPage({ token }: { token: string }) {
   );
 }
 
-function ListingCard({ listing: l, onPlaceOffer, onAccept }: { 
-  listing: Listing; 
-  onPlaceOffer: (id: string, name: string, amt: number) => void;
+function ListingCard({ listing: l, onPlaceOffer, onAccept, onDelete, canManage }: {
+  listing: Listing;
+  onPlaceOffer: (id: string, amt: number) => void;
   onAccept: (lId: string, oId: string) => void;
+  onDelete: (id: string) => void;
+  canManage: boolean;
 }) {
-  const [offerName, setOfferName] = useState("");
   const [offerAmount, setOfferAmount] = useState<number | "">(listingPrice(l));
   
   function listingPrice(item: Listing) {
@@ -333,13 +361,7 @@ function ListingCard({ listing: l, onPlaceOffer, onAccept }: {
         {l.status === "OPEN" ? (
           <div className="space-y-3 bg-[var(--chip)] p-4 rounded-xl border border-[var(--border)]">
             <div className="flex gap-2">
-              <input 
-                className="input-premium py-2 text-sm" 
-                placeholder="Your Name"
-                value={offerName}
-                onChange={(e) => setOfferName(e.target.value)}
-              />
-              <div className="relative shrink-0 w-28">
+              <div className="relative shrink-0 w-full">
                 <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)]" size={14} />
                 <input 
                   className="input-premium py-2 pl-6 text-sm" 
@@ -351,8 +373,8 @@ function ListingCard({ listing: l, onPlaceOffer, onAccept }: {
               </div>
             </div>
             <button 
-              disabled={!offerName || offerAmount === ""}
-              onClick={() => onPlaceOffer(l.id, offerName, Number(offerAmount))}
+              disabled={offerAmount === ""}
+              onClick={() => onPlaceOffer(l.id, Number(offerAmount))}
               className={`w-full py-2.5 rounded-xl font-bold text-sm transition-all shadow-sm active:scale-[0.98] ${
                 isCustomPrice 
                   ? "bg-[var(--text)] text-[var(--bg-elev)]" 
@@ -379,7 +401,7 @@ function ListingCard({ listing: l, onPlaceOffer, onAccept }: {
         )}
 
         {/* Seller Controls for OPEN listings */}
-        {l.status === "OPEN" && l.offers.length > 0 && (
+        {canManage && l.status === "OPEN" && l.offers.length > 0 && (
           <div className="mt-4 pt-4 border-t border-dashed border-[var(--border)]">
              <div className="text-[10px] font-bold text-[var(--muted)] uppercase mb-2">Pending Offers</div>
              <div className="space-y-2">
@@ -389,7 +411,7 @@ function ListingCard({ listing: l, onPlaceOffer, onAccept }: {
                       <div className="font-bold text-[var(--text)]">{o.bidderName}</div>
                       <div className="text-emerald-500 font-black">${o.amount.toFixed(2)}</div>
                     </div>
-                    <button 
+                    <button
                       onClick={() => onAccept(l.id, o.id)}
                       className="px-3 py-1 bg-emerald-500 text-white text-[10px] font-black rounded-md hover:bg-emerald-600"
                     >
@@ -398,6 +420,17 @@ function ListingCard({ listing: l, onPlaceOffer, onAccept }: {
                  </div>
                ))}
              </div>
+          </div>
+        )}
+
+        {canManage && (
+          <div className="mt-3">
+            <button
+              onClick={() => onDelete(l.id)}
+              className="w-full py-2 rounded-xl border border-red-200 text-red-600 text-xs font-bold hover:bg-red-50"
+            >
+              Delete Listing
+            </button>
           </div>
         )}
       </div>

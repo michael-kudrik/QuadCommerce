@@ -20,6 +20,9 @@ type Conversation = {
   peerEmail: string;
   lastText: string;
   lastAt?: string;
+  unreadCount?: number;
+  myReadAt?: string | null;
+  peerReadAt?: string | null;
 };
 
 export function ChatsPage({ token, meUserId }: { token: string; meUserId: string }) {
@@ -33,6 +36,7 @@ export function ChatsPage({ token, meUserId }: { token: string; meUserId: string
   const [lastReadByPeer, setLastReadByPeer] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messageIdsRef = useRef<Set<string>>(new Set());
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -46,8 +50,14 @@ export function ChatsPage({ token, meUserId }: { token: string; meUserId: string
     try {
       const res = await fetch(`${API}/chats/conversations`, { headers: { Authorization: `Bearer ${token}` } });
       const conv = await res.json();
-      setConversations(Array.isArray(conv) ? conv : []);
-      if (!activePeerUserId && conv[0]?.peerUserId) setActivePeerUserId(conv[0].peerUserId);
+      const normalized: Conversation[] = Array.isArray(conv) ? conv : [];
+      setConversations(normalized);
+      setUnreadByPeer(Object.fromEntries(normalized.map((c) => [c.peerUserId, c.unreadCount || 0])));
+      setLastReadByPeer((prev) => ({
+        ...prev,
+        ...Object.fromEntries(normalized.filter((c) => c.peerReadAt).map((c) => [c.peerUserId, c.peerReadAt as string]))
+      }));
+      if (!activePeerUserId && normalized[0]?.peerUserId) setActivePeerUserId(normalized[0].peerUserId);
     } catch (err) {
       console.error("Failed to load conversations", err);
     }
@@ -67,10 +77,15 @@ export function ChatsPage({ token, meUserId }: { token: string; meUserId: string
   }
 
   async function loadMessages(peerUserId: string) {
-    if (!peerUserId) return setMessages([]);
+    if (!peerUserId) {
+      messageIdsRef.current = new Set();
+      return setMessages([]);
+    }
     try {
       const msgs = await fetch(`${API}/chats/${peerUserId}`, { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.json());
-      setMessages(Array.isArray(msgs) ? msgs : []);
+      const normalized: ChatMessage[] = Array.isArray(msgs) ? msgs : [];
+      messageIdsRef.current = new Set(normalized.map((m) => m.id));
+      setMessages(normalized);
       await markConversationRead(peerUserId);
     } catch (err) {
       console.error("Failed to load messages", err);
@@ -91,11 +106,14 @@ export function ChatsPage({ token, meUserId }: { token: string; meUserId: string
     const chatSocket = io("/", { transports: ["websocket"], auth: { token } });
     
     const onNew = (m: ChatMessage) => {
+      if (!m?.id || messageIdsRef.current.has(m.id)) return;
+
       const activePeer = activePeerRef.current;
       const isFromActivePeer = m.senderUserId === activePeer;
       const isToActivePeer = m.recipientUserId === activePeer;
 
       if (isFromActivePeer || isToActivePeer) {
+        messageIdsRef.current.add(m.id);
         setMessages((prev) => [...prev, m]);
       }
 

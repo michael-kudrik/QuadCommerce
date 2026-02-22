@@ -10,6 +10,7 @@
     "dev": "npm run dev -w @quadcommerce/api & npm run dev -w @quadcommerce/web",
     "dev:api": "npm run dev -w @quadcommerce/api",
     "dev:web": "npm run dev -w @quadcommerce/web",
+    "validate:realtime": "node scripts/validate-realtime.mjs",
     "build": "npm run build -ws",
     "lint": "echo 'lint not configured yet'"
   }

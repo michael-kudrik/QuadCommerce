@@ -17,8 +17,6 @@ interface UserDoc extends mongoose.Document {
   email: string;
   passwordHash: string;
   role: UserRole;
-  description?: string;
-  portfolioWebsite?: string;
 }
 
 interface ServiceDoc extends mongoose.Document {
@@ -27,7 +25,6 @@ interface ServiceDoc extends mongoose.Document {
   description: string;
   durationMinutes: number;
   priceUsd: number;
-  imageUrl?: string;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -40,7 +37,7 @@ interface AppointmentDoc extends mongoose.Document {
   customerName: string;
   customerEmail: string;
   startAt: Date;
-  status: "pending" | "approved" | "denied" | "completed" | "cancelled" | "scheduled";
+  status: "scheduled" | "completed" | "cancelled";
   notes?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -52,6 +49,16 @@ interface ChatMessageDoc extends mongoose.Document {
   senderName: string;
   senderEmail: string;
   text: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface ChatReadStateDoc extends mongoose.Document {
+  ownerUserId: mongoose.Types.ObjectId;
+  peerUserId: mongoose.Types.ObjectId;
+  readAt: Date;
+  latestIncomingMessageId?: mongoose.Types.ObjectId;
+  latestIncomingMessageAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -79,9 +86,7 @@ const userSchema = new Schema<UserDoc>(
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true, lowercase: true },
     passwordHash: { type: String, required: true },
-    role: { type: String, enum: ["student", "businessOwner"], default: "student" },
-    description: { type: String, required: false, default: "" },
-    portfolioWebsite: { type: String, required: false, default: "" }
+    role: { type: String, enum: ["student", "businessOwner"], default: "student" }
   },
   { timestamps: true }
 );
@@ -106,7 +111,7 @@ const appointmentSchema = new Schema<AppointmentDoc>(
     customerName: { type: String, required: true },
     customerEmail: { type: String, required: true },
     startAt: { type: Date, required: true, index: true },
-    status: { type: String, enum: ["pending", "approved", "denied", "completed", "cancelled", "scheduled"], default: "pending" },
+    status: { type: String, enum: ["scheduled", "completed", "cancelled"], default: "scheduled" },
     notes: { type: String }
   },
   { timestamps: true }
@@ -122,6 +127,19 @@ const chatMessageSchema = new Schema<ChatMessageDoc>(
   },
   { timestamps: true }
 );
+
+const chatReadStateSchema = new Schema<ChatReadStateDoc>(
+  {
+    ownerUserId: { type: Schema.Types.ObjectId, required: true, index: true },
+    peerUserId: { type: Schema.Types.ObjectId, required: true, index: true },
+    readAt: { type: Date, required: true },
+    latestIncomingMessageId: { type: Schema.Types.ObjectId, required: false },
+    latestIncomingMessageAt: { type: Date, required: false }
+  },
+  { timestamps: true }
+);
+
+chatReadStateSchema.index({ ownerUserId: 1, peerUserId: 1 }, { unique: true });
 
 const listingSchema = new Schema<ListingDoc>(
   {
@@ -155,6 +173,7 @@ const User = mongoose.model<UserDoc>("User", userSchema);
 const Service = mongoose.model<ServiceDoc>("Service", serviceSchema);
 const Appointment = mongoose.model<AppointmentDoc>("Appointment", appointmentSchema);
 const ChatMessage = mongoose.model<ChatMessageDoc>("ChatMessage", chatMessageSchema);
+const ChatReadState = mongoose.model<ChatReadStateDoc>("ChatReadState", chatReadStateSchema);
 const Listing = mongoose.model<ListingDoc>("Listing", listingSchema);
 
 const registerSchema = z.object({
@@ -183,7 +202,6 @@ const createListingSchema = z.object({
 });
 
 const createOfferSchema = z.object({
-  // kept optional for backward compatibility with older clients; server ignores it.
   bidderName: z.string().min(2).optional(),
   amount: z.number().positive()
 });
@@ -191,9 +209,8 @@ const createOfferSchema = z.object({
 const createServiceSchema = z.object({
   name: z.string().min(2),
   description: z.string().min(5),
-  durationMinutes: z.number().int().min(15).max(480),
-  priceUsd: z.number().nonnegative(),
-  imageUrl: z.string().max(2_000_000).optional().or(z.literal(""))
+  durationMinutes: z.coerce.number().int().min(15).max(480),
+  priceUsd: z.coerce.number().nonnegative()
 });
 
 const updateServiceSchema = createServiceSchema.partial().extend({
@@ -207,18 +224,12 @@ const createAppointmentSchema = z.object({
 });
 
 const updateAppointmentSchema = z.object({
-  status: z.enum(["approved", "completed", "cancelled"])
-});
-
-const denyAppointmentSchema = z.object({
-  reason: z.string().min(2).max(500).optional()
+  status: z.enum(["scheduled", "completed", "cancelled"]) 
 });
 
 const updateProfileSchema = z.object({
   name: z.string().min(2).optional(),
-  role: z.enum(["student", "businessOwner"]).optional(),
-  description: z.string().max(1000).optional(),
-  portfolioWebsite: z.union([z.literal(""), z.string().url()]).optional()
+  role: z.enum(["student", "businessOwner"]).optional()
 });
 
 const chatMessageSchemaInput = z.object({
@@ -232,20 +243,21 @@ const chatPeerParamSchema = z.object({
     .refine((v) => mongoose.Types.ObjectId.isValid(v), "Invalid peer user id")
 });
 
-const objectIdSchema = z
-  .string()
-  .min(1)
-  .refine((v) => mongoose.Types.ObjectId.isValid(v), "Invalid id");
-
-function parseObjectId(id: string) {
-  const parsed = objectIdSchema.safeParse(id);
-  if (!parsed.success) return null;
-  return new mongoose.Types.ObjectId(parsed.data);
-}
-
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, { cors: { origin: "*" } });
+
+io.use(async (socket, next) => {
+  const token = (socket.handshake.auth?.token || socket.handshake.query?.token || "") as string;
+  const subject = token ? verifyTokenSubject(token) : null;
+  if (!subject) return next(new Error("Unauthorized"));
+
+  const user = await User.findById(subject).select({ _id: 1 });
+  if (!user) return next(new Error("Unauthorized"));
+
+  (socket.data as any).userId = user._id.toString();
+  return next();
+});
 
 // --- Middleware ---
 app.use(cors());
@@ -303,19 +315,6 @@ async function auth(req: express.Request, res: express.Response, next: express.N
   next();
 }
 
-
-function serializeUser(user: UserDoc) {
-  return {
-    id: user._id.toString(),
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    description: user.description || "",
-    portfolioWebsite: user.portfolioWebsite || "",
-    schoolVerified: true
-  };
-}
-
 function serializeListing(doc: ListingDoc) {
   const now = Date.now();
   const start = doc.startsAt.getTime();
@@ -352,20 +351,6 @@ function serializeListing(doc: ListingDoc) {
   };
 }
 
-function serializeAppointment(a: AppointmentDoc) {
-  return {
-    id: a._id.toString(),
-    serviceId: a.serviceId.toString(),
-    businessOwnerId: a.businessOwnerId.toString(),
-    customerUserId: a.customerUserId.toString(),
-    customerName: a.customerName,
-    customerEmail: a.customerEmail,
-    startAt: a.startAt.toISOString(),
-    status: a.status,
-    notes: a.notes
-  };
-}
-
 async function broadcastListings() {
   const docs = await Listing.find().sort({ createdAt: -1 });
   io.emit("listings:updated", docs.map(serializeListing));
@@ -395,7 +380,7 @@ app.post("/api/auth/register", async (req, res) => {
   });
 
   const token = signToken(user);
-  return res.status(201).json({ token, user: serializeUser(user) });
+  return res.status(201).json({ token, user: { id: user._id.toString(), name: user.name, email: user.email, role: user.role, schoolVerified: true } });
 });
 
 app.post("/api/auth/login", async (req, res) => {
@@ -408,12 +393,12 @@ app.post("/api/auth/login", async (req, res) => {
   }
 
   const token = signToken(user);
-  return res.json({ token, user: serializeUser(user) });
+  return res.json({ token, user: { id: user._id.toString(), name: user.name, email: user.email, role: user.role, schoolVerified: true } });
 });
 
 app.get("/api/me", auth, async (req, res) => {
   const user = (req as any).user as UserDoc;
-  return res.json(serializeUser(user));
+  return res.json({ id: user._id.toString(), name: user.name, email: user.email, role: user.role, schoolVerified: true });
 });
 
 app.patch("/api/me", auth, async (req, res) => {
@@ -423,45 +408,27 @@ app.patch("/api/me", auth, async (req, res) => {
 
   if (parsed.data.name) user.name = parsed.data.name;
   if (parsed.data.role) user.role = parsed.data.role;
-  if (parsed.data.description !== undefined) user.description = parsed.data.description;
-  if (parsed.data.portfolioWebsite !== undefined) user.portfolioWebsite = parsed.data.portfolioWebsite;
   await user.save();
 
-  return res.json(serializeUser(user));
+  return res.json({ id: user._id.toString(), name: user.name, email: user.email, role: user.role, schoolVerified: true });
 });
 
 app.get("/api/dashboard", auth, async (req, res) => {
   const user = (req as any).user as UserDoc;
-  const [listingsCount, soldCount, appointmentsCount, offersAgg, servicesCount, servicesSoldCount] = await Promise.all([
-    Listing.countDocuments({ sellerUserId: user._id }),
-    Listing.countDocuments({ sellerUserId: user._id, status: "SOLD" }),
+  const [listingsCount, soldCount, appointmentsCount, offersAgg, servicesCount] = await Promise.all([
+    Listing.countDocuments(),
+    Listing.countDocuments({ status: "SOLD" }),
     user.role === "businessOwner"
       ? Appointment.countDocuments({ businessOwnerId: user._id })
       : Appointment.countDocuments({ customerUserId: user._id }),
-    Listing.aggregate([
-      { $match: { sellerUserId: user._id } },
-      { $unwind: "$offers" },
-      { $count: "total" }
-    ]),
-    user.role === "businessOwner" ? Service.countDocuments({ ownerId: user._id }) : Promise.resolve(0),
-    user.role === "businessOwner" ? Appointment.countDocuments({ businessOwnerId: user._id, status: "completed" }) : Promise.resolve(0)
+    Listing.aggregate([{ $unwind: "$offers" }, { $count: "total" }]),
+    user.role === "businessOwner" ? Service.countDocuments({ ownerId: user._id }) : Promise.resolve(0)
   ]);
 
   const totalOffers = offersAgg[0]?.total ?? 0;
   return res.json({
     user: { id: user._id.toString(), role: user.role },
-    stats: {
-      listingsCount,
-      soldCount,
-      totalOffers,
-      appointmentsCount,
-      servicesCount,
-      servicesSoldCount,
-      salesByType: {
-        productsSold: soldCount,
-        servicesSold: servicesSoldCount
-      }
-    }
+    stats: { listingsCount, soldCount, totalOffers, appointmentsCount, servicesCount }
   });
 });
 
@@ -503,6 +470,7 @@ app.post("/api/listings/:id/offers", auth, async (req, res) => {
   if (doc.status !== "OPEN") return res.status(400).json({ error: "Listing is not open" });
   if (doc.offerWindowEndsAt.getTime() < Date.now()) return res.status(400).json({ error: "Offer window has ended" });
 
+  // Block seller from bidding on their own listing.
   if (doc.sellerUserId?.toString() === user._id.toString()) {
     return res.status(403).json({ error: "Sellers cannot bid on their own listing" });
   }
@@ -510,7 +478,6 @@ app.post("/api/listings/:id/offers", auth, async (req, res) => {
   const parsed = createOfferSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  // Enforce authenticated identity; ignore bidderName supplied by client.
   doc.offers.push({ bidderName: user.name, amount: parsed.data.amount, createdAt: new Date() } as any);
   await doc.save();
   await broadcastListings();
@@ -519,19 +486,26 @@ app.post("/api/listings/:id/offers", auth, async (req, res) => {
   return res.status(201).json({ id: added._id.toString(), bidderName: added.bidderName, amount: added.amount, createdAt: added.createdAt.toISOString() });
 });
 
-app.post("/api/listings/:id/accept-offer", auth, async (req, res) => {
+app.delete("/api/listings/:id", auth, async (req, res) => {
   const user = (req as any).user as UserDoc;
-  const listingId = parseObjectId(req.params.id);
-  if (!listingId) return res.status(400).json({ error: "Invalid listing id" });
-
-  const doc = await Listing.findById(listingId);
+  const doc = await Listing.findById(req.params.id).select({ _id: 1, sellerUserId: 1 });
   if (!doc) return res.status(404).json({ error: "Listing not found" });
-  if (doc.status !== "OPEN") return res.status(400).json({ error: "Listing is not open" });
-  if (doc.sellerUserId?.toString() !== user._id.toString()) {
-    return res.status(403).json({ error: "Only the listing seller can accept an offer" });
+
+  if (!doc.sellerUserId || doc.sellerUserId.toString() !== user._id.toString()) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
-  const parsedId = objectIdSchema.safeParse(req.body.offerId);
+  await Listing.deleteOne({ _id: doc._id });
+  await broadcastListings();
+  return res.json({ ok: true });
+});
+
+app.post("/api/listings/:id/accept-offer", async (req, res) => {
+  const doc = await Listing.findById(req.params.id);
+  if (!doc) return res.status(404).json({ error: "Listing not found" });
+  if (doc.status !== "OPEN") return res.status(400).json({ error: "Listing is not open" });
+
+  const parsedId = z.string().min(1).safeParse(req.body.offerId);
   if (!parsedId.success) return res.status(400).json({ error: "Invalid offerId" });
 
   const offer = doc.offers.find((o) => o._id.toString() === parsedId.data);
@@ -545,12 +519,19 @@ app.post("/api/listings/:id/accept-offer", auth, async (req, res) => {
   return res.json({ listingId: doc._id.toString(), status: doc.status, acceptedOffer: { id: offer._id.toString(), bidderName: offer.bidderName, amount: offer.amount } });
 });
 
+app.delete("/api/listings/:id", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
+  const deleted = await Listing.findOneAndDelete({ _id: req.params.id, sellerUserId: user._id });
+  if (!deleted) return res.status(404).json({ error: "Listing not found" });
+  await broadcastListings();
+  return res.json({ ok: true });
+});
+
 // Services (CRUD)
 app.get("/api/services", auth, async (req, res) => {
   const user = (req as any).user as UserDoc;
-  const filter = user.role === "businessOwner" ? { ownerId: user._id } : { isActive: true };
-  const docs = await Service.find(filter).sort({ createdAt: -1 });
-  res.json(docs.map((d) => ({ id: d._id.toString(), name: d.name, description: d.description, durationMinutes: d.durationMinutes, priceUsd: d.priceUsd, imageUrl: d.imageUrl, isActive: d.isActive })));
+  const docs = await Service.find({ ownerId: user._id }).sort({ createdAt: -1 });
+  res.json(docs.map((d) => ({ id: d._id.toString(), name: d.name, description: d.description, durationMinutes: d.durationMinutes, priceUsd: d.priceUsd, isActive: d.isActive })));
 });
 
 app.post("/api/services", auth, async (req, res) => {
@@ -560,8 +541,8 @@ app.post("/api/services", auth, async (req, res) => {
   const parsed = createServiceSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const created = await Service.create({ ownerId: user._id, ...parsed.data, imageUrl: parsed.data.imageUrl || undefined, isActive: true });
-  return res.status(201).json({ id: created._id.toString(), name: created.name, description: created.description, durationMinutes: created.durationMinutes, priceUsd: created.priceUsd, imageUrl: created.imageUrl, isActive: created.isActive });
+  const created = await Service.create({ ownerId: user._id, ...parsed.data, isActive: true });
+  return res.status(201).json({ id: created._id.toString(), name: created.name, description: created.description, durationMinutes: created.durationMinutes, priceUsd: created.priceUsd, isActive: created.isActive });
 });
 
 app.patch("/api/services/:id", auth, async (req, res) => {
@@ -569,16 +550,20 @@ app.patch("/api/services/:id", auth, async (req, res) => {
   const parsed = updateServiceSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const patch = { ...parsed.data, ...(parsed.data.imageUrl !== undefined ? { imageUrl: parsed.data.imageUrl || undefined } : {}) };
-  const updated = await Service.findOneAndUpdate({ _id: req.params.id, ownerId: user._id }, { $set: patch }, { new: true });
+  const updated = await Service.findOneAndUpdate({ _id: req.params.id, ownerId: user._id }, { $set: parsed.data }, { new: true });
   if (!updated) return res.status(404).json({ error: "Service not found" });
-  return res.json({ id: updated._id.toString(), name: updated.name, description: updated.description, durationMinutes: updated.durationMinutes, priceUsd: updated.priceUsd, imageUrl: updated.imageUrl, isActive: updated.isActive });
+  return res.json({ id: updated._id.toString(), name: updated.name, description: updated.description, durationMinutes: updated.durationMinutes, priceUsd: updated.priceUsd, isActive: updated.isActive });
 });
 
 app.delete("/api/services/:id", auth, async (req, res) => {
   const user = (req as any).user as UserDoc;
-  const deleted = await Service.findOneAndDelete({ _id: req.params.id, ownerId: user._id });
-  if (!deleted) return res.status(404).json({ error: "Service not found" });
+  const existing = await Service.findById(req.params.id).select({ _id: 1, ownerId: 1 });
+  if (!existing) return res.status(404).json({ error: "Service not found" });
+  if (existing.ownerId.toString() !== user._id.toString()) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  await Service.deleteOne({ _id: existing._id });
   return res.json({ ok: true });
 });
 
@@ -591,9 +576,6 @@ app.post("/api/appointments", auth, async (req, res) => {
   const service = await Service.findById(parsed.data.serviceId);
   if (!service || !service.isActive) return res.status(404).json({ error: "Service not found" });
 
-  const owner = await User.findById(service.ownerId);
-  if (!owner) return res.status(404).json({ error: "Service owner not found" });
-
   const created = await Appointment.create({
     serviceId: service._id,
     businessOwnerId: service.ownerId,
@@ -601,35 +583,40 @@ app.post("/api/appointments", auth, async (req, res) => {
     customerName: user.name,
     customerEmail: user.email,
     startAt: new Date(parsed.data.startAt),
-    status: "pending",
+    status: "scheduled",
     notes: parsed.data.notes
   });
 
-  const hasExistingDirectChat = await ChatMessage.exists({
-    $or: [
-      { senderUserId: user._id, recipientUserId: owner._id },
-      { senderUserId: owner._id, recipientUserId: user._id }
-    ]
+  return res.status(201).json({
+    id: created._id.toString(),
+    serviceId: created.serviceId.toString(),
+    businessOwnerId: created.businessOwnerId.toString(),
+    customerUserId: created.customerUserId.toString(),
+    customerName: created.customerName,
+    customerEmail: created.customerEmail,
+    startAt: created.startAt.toISOString(),
+    status: created.status,
+    notes: created.notes
   });
-
-  if (!hasExistingDirectChat) {
-    await ChatMessage.create({
-      senderUserId: user._id,
-      recipientUserId: owner._id,
-      senderName: user.name,
-      senderEmail: user.email,
-      text: `Hi ${owner.name}, I requested \"${service.name}\" for ${created.startAt.toLocaleString()}. Please approve or deny when you can.`
-    });
-  }
-
-  return res.status(201).json(serializeAppointment(created));
 });
 
 app.get("/api/appointments", auth, async (req, res) => {
   const user = (req as any).user as UserDoc;
   const filter = user.role === "businessOwner" ? { businessOwnerId: user._id } : { customerUserId: user._id };
   const docs = await Appointment.find(filter).sort({ startAt: 1 });
-  res.json(docs.map(serializeAppointment));
+  res.json(
+    docs.map((a) => ({
+      id: a._id.toString(),
+      serviceId: a.serviceId.toString(),
+      businessOwnerId: a.businessOwnerId.toString(),
+      customerUserId: a.customerUserId.toString(),
+      customerName: a.customerName,
+      customerEmail: a.customerEmail,
+      startAt: a.startAt.toISOString(),
+      status: a.status,
+      notes: a.notes
+    }))
+  );
 });
 
 app.patch("/api/appointments/:id", auth, async (req, res) => {
@@ -647,70 +634,6 @@ app.patch("/api/appointments/:id", auth, async (req, res) => {
   if (!updated) return res.status(404).json({ error: "Appointment not found" });
 
   return res.json({ id: updated._id.toString(), status: updated.status });
-});
-
-app.post("/api/appointments/:id/approve", auth, async (req, res) => {
-  const user = (req as any).user as UserDoc;
-  if (user.role !== "businessOwner") return res.status(403).json({ error: "Only businessOwner can approve appointment requests" });
-
-  const appointmentId = parseObjectId(req.params.id);
-  if (!appointmentId) return res.status(400).json({ error: "Invalid appointment id" });
-
-  const appointment = await Appointment.findById(appointmentId);
-  if (!appointment) return res.status(404).json({ error: "Appointment not found" });
-  if (appointment.businessOwnerId.toString() !== user._id.toString()) {
-    return res.status(403).json({ error: "Only the appointment owner can approve this request" });
-  }
-
-  const service = await Service.findById(appointment.serviceId).select({ ownerId: 1 });
-  if (!service) return res.status(409).json({ error: "Associated service no longer exists" });
-  if (service.ownerId.toString() !== user._id.toString()) {
-    return res.status(403).json({ error: "Only the service owner can approve this request" });
-  }
-
-  if (!["pending", "scheduled"].includes(appointment.status)) {
-    return res.status(409).json({ error: `Appointment cannot be approved from status ${appointment.status}` });
-  }
-
-  appointment.status = "approved";
-  await appointment.save();
-  return res.json(serializeAppointment(appointment));
-});
-
-app.post("/api/appointments/:id/deny", auth, async (req, res) => {
-  const user = (req as any).user as UserDoc;
-  if (user.role !== "businessOwner") return res.status(403).json({ error: "Only businessOwner can deny appointment requests" });
-
-  const parsed = denyAppointmentSchema.safeParse(req.body ?? {});
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-
-  const appointmentId = parseObjectId(req.params.id);
-  if (!appointmentId) return res.status(400).json({ error: "Invalid appointment id" });
-
-  const appointment = await Appointment.findById(appointmentId);
-  if (!appointment) return res.status(404).json({ error: "Appointment not found" });
-  if (appointment.businessOwnerId.toString() !== user._id.toString()) {
-    return res.status(403).json({ error: "Only the appointment owner can deny this request" });
-  }
-
-  const service = await Service.findById(appointment.serviceId).select({ ownerId: 1 });
-  if (!service) return res.status(409).json({ error: "Associated service no longer exists" });
-  if (service.ownerId.toString() !== user._id.toString()) {
-    return res.status(403).json({ error: "Only the service owner can deny this request" });
-  }
-
-  if (!["pending", "scheduled"].includes(appointment.status)) {
-    return res.status(409).json({ error: `Appointment cannot be denied from status ${appointment.status}` });
-  }
-
-  appointment.status = "denied";
-  if (parsed.data.reason) {
-    appointment.notes = appointment.notes
-      ? `${appointment.notes}\n\nDenial reason: ${parsed.data.reason}`
-      : `Denial reason: ${parsed.data.reason}`;
-  }
-  await appointment.save();
-  return res.json(serializeAppointment(appointment));
 });
 
 // User-scoped direct chat
@@ -751,11 +674,34 @@ app.get("/api/chats/conversations", auth, async (req, res) => {
   const peerUsers = await User.find({ _id: { $in: peers } });
   const peerMap = new Map(peerUsers.map((u) => [u._id.toString(), u]));
 
+  const myReadStates = await ChatReadState.find({ ownerUserId: uid, peerUserId: { $in: peers } });
+  const myReadMap = new Map(myReadStates.map((r) => [r.peerUserId.toString(), r]));
+
+  const peerReadStates = await ChatReadState.find({ ownerUserId: { $in: peers }, peerUserId: uid });
+  const peerReadMap = new Map(peerReadStates.map((r) => [r.ownerUserId.toString(), r]));
+
+  const unreadByPeer: Record<string, number> = {};
+  for (const m of msgs) {
+    if (!m.senderUserId || !m.recipientUserId) continue;
+    const senderId = m.senderUserId.toString();
+    const recipientId = m.recipientUserId.toString();
+    const myId = uid.toString();
+    if (recipientId !== myId) continue;
+    const state = myReadMap.get(senderId);
+    const readAt = state?.readAt?.getTime() ?? 0;
+    if (m.createdAt.getTime() > readAt) {
+      unreadByPeer[senderId] = (unreadByPeer[senderId] || 0) + 1;
+    }
+  }
+
   res.json(
     [...summaries.values()].map((s) => ({
       ...s,
       peerName: peerMap.get(s.peerUserId)?.name || "Unknown",
-      peerEmail: peerMap.get(s.peerUserId)?.email || ""
+      peerEmail: peerMap.get(s.peerUserId)?.email || "",
+      unreadCount: unreadByPeer[s.peerUserId] || 0,
+      myReadAt: myReadMap.get(s.peerUserId)?.readAt?.toISOString() || null,
+      peerReadAt: peerReadMap.get(s.peerUserId)?.readAt?.toISOString() || null
     }))
   );
 });
@@ -837,10 +783,24 @@ app.post("/api/chats/:peerUserId/read", auth, async (req, res) => {
     .sort({ createdAt: -1 })
     .select({ _id: 1, createdAt: 1 });
 
+  const readAt = new Date();
+
+  await ChatReadState.findOneAndUpdate(
+    { ownerUserId: user._id, peerUserId: peer._id },
+    {
+      $set: {
+        readAt,
+        latestIncomingMessageId: latestIncoming?._id,
+        latestIncomingMessageAt: latestIncoming?.createdAt
+      }
+    },
+    { upsert: true, new: true }
+  );
+
   const payload = {
     peerUserId: peer._id.toString(),
     readerUserId: user._id.toString(),
-    readAt: new Date().toISOString(),
+    readAt: readAt.toISOString(),
     latestIncomingMessageId: latestIncoming?._id?.toString() || null,
     latestIncomingMessageAt: latestIncoming?.createdAt?.toISOString() || null
   };
@@ -848,6 +808,32 @@ app.post("/api/chats/:peerUserId/read", auth, async (req, res) => {
   io.to(`user:${peer._id.toString()}`).emit("chat:read", payload);
   io.to(`user:${user._id.toString()}`).emit("chat:read", payload);
   return res.json(payload);
+});
+
+app.get("/api/chats/meta/read-states", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
+  const uid = user._id;
+
+  const [myStates, peerStates] = await Promise.all([
+    ChatReadState.find({ ownerUserId: uid }).sort({ updatedAt: -1 }),
+    ChatReadState.find({ peerUserId: uid }).sort({ updatedAt: -1 })
+  ]);
+
+  const mine = myStates.map((s) => ({
+    peerUserId: s.peerUserId.toString(),
+    readAt: s.readAt.toISOString(),
+    latestIncomingMessageId: s.latestIncomingMessageId?.toString() || null,
+    latestIncomingMessageAt: s.latestIncomingMessageAt?.toISOString() || null
+  }));
+
+  const peers = peerStates.map((s) => ({
+    peerUserId: s.ownerUserId.toString(),
+    readAt: s.readAt.toISOString(),
+    latestIncomingMessageId: s.latestIncomingMessageId?.toString() || null,
+    latestIncomingMessageAt: s.latestIncomingMessageAt?.toISOString() || null
+  }));
+
+  return res.json({ mine, peers });
 });
 
 const MONGO_URI = process.env.MONGO_URI ?? "mongodb://127.0.0.1:27017/quadcommerce";
@@ -891,18 +877,18 @@ async function start() {
 }
 
 io.on("connection", (socket) => {
-  const token = (socket.handshake.auth?.token || socket.handshake.query?.token || "") as string;
-  if (token) {
-    const subject = verifyTokenSubject(token);
-    if (subject) {
-      socket.join(`user:${subject}`);
-    }
+  const subject = (socket.data as any).userId as string | undefined;
+  if (!subject) {
+    socket.disconnect(true);
+    return;
   }
-  socket.emit("connected", { ok: true });
+
+  socket.join(`user:${subject}`);
+  socket.emit("connected", { ok: true, userId: subject });
 });
 
 // --- Global Error Handler ---
-app.use((err: any, _req: express.Response, res: express.Response, _next: express.NextFunction) => {
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error("Unhandled error:", err);
   res.status(500).json({ error: "Internal Server Error", message: err.message });
 });
