@@ -22,6 +22,10 @@ export type Listing = {
   description: string;
   category: "textbook" | "dorm" | "other";
   status: "OPEN" | "SOLD" | "CLOSED";
+  startPrice: number;
+  floorPrice: number;
+  currentPrice: number;
+  offerWindowHours?: number;
   offerWindowEndsAt: string;
   acceptedOfferId?: string;
   offers: Offer[];

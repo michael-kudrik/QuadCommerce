@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: #f6f7fb;
+    --bg-elev: #ffffff;
+    --text: #16181d;
+    --muted: #5f6472;
+    --border: #e6e8ef;
+    --accent: #6d5efc;
+    --accent-2: #22c55e;
+    --chip: #f1f3ff;
+    --shadow: 0 10px 30px rgba(18, 22, 33, 0.08);
+  }
+
+  .dark {
+    --bg: #0f1117;
+    --bg-elev: #171a23;
+    --text: #f2f4f8;
+    --muted: #a3a8b7;
+    --border: #2a3040;
+    --accent: #8b7cff;
+    --accent-2: #37d67a;
+    --chip: #1f2432;
+    --shadow: 0 16px 36px rgba(0, 0, 0, 0.35);
+  }
+
+  body {
+    @apply min-h-screen transition-colors duration-200;
+    background-color: var(--bg);
+    color: var(--text);
+  }
+
+  /* Remove number input spinners */
+  input::-webkit-outer-spin-button,
+  input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type=number] {
+    -moz-appearance: textfield;
+  }
+}
+
+@layer components {
+  .card-premium {
+    @apply rounded-2xl border transition-all duration-300;
+    background-color: var(--bg-elev);
+    border-color: var(--border);
+    box-shadow: var(--shadow);
+  }
+  
+  .btn-primary {
+    @apply text-white font-semibold py-2.5 px-6 rounded-xl transition-all duration-200 shadow-sm hover:shadow active:scale-[0.98];
+    background-color: var(--accent);
+  }
+  .btn-primary:hover {
+    filter: brightness(1.1);
+  }
+
+  .input-premium {
+    @apply w-full rounded-xl px-4 py-2.5 outline-none border transition-all;
+    background-color: var(--bg-elev);
+    border-color: var(--border);
+    color: var(--text);
+  }
+  .input-premium:focus {
+    border-color: var(--accent);
+    @apply ring-2 ring-brand-500/20;
+  }
+
+  /* Semantic helper classes to avoid hardcoded slate colors */
+  .text-main { color: var(--text); }
+  .text-sub { color: var(--muted); }
+  .bg-main { background-color: var(--bg); }
+  .bg-elev { background-color: var(--bg-elev); }
+  .border-main { border-color: var(--border); }
+}
