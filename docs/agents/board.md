@@ -1,52 +1,53 @@
-# Multi-Agent Board (Orchestrator)
+# Multi-Agent Board (Execution)
 
-## Status Legend
-- TODO
-- IN_PROGRESS
-- DONE
-- BLOCKED
+## Run: 2026-02-21 Night Execution
 
-## Active Sprint: Multi-Agent Kickoff
-
-### ORCH-001 Establish orchestration artifacts
+### ORCH-002 Execute multiagent-plan.md
 - Owner: orchestrator(main)
-- Status: DONE
-- Output: board + task packets + run log
+- Status: IN_PROGRESS
+- Goal: Run parallel specialist agents across backend/frontend/realtime/qa/devops
 
-### BE-001 Backend hardening packet execution
+## Active Tasks
+
+### BE-002 Auth + Session hardening pass
 - Owner: subagent-backend
 - Status: IN_PROGRESS
-- Scope:
-  - auth robustness checks
-  - chat user-scope verification
-  - endpoint contract sanity checks
+- Acceptance:
+  - verify JWT lifecycle edge cases
+  - propose session invalidation strategy
+  - patch safe improvements
 
-### FE-001 Frontend structure + auth-flow reliability packet
+### FE-002 Frontend platform pass
 - Owner: subagent-frontend
 - Status: IN_PROGRESS
-- Scope:
-  - route/component structure audit
-  - login/register timeout UX checks
-  - route guard behavior validation
+- Acceptance:
+  - fix listing-create UI disappearance
+  - ensure page-level loading/error resilience
+  - keep component structure clean
 
-### RT-001 Realtime/Chat packet
+### RT-002 Chat evolution pass
 - Owner: subagent-realtime
 - Status: IN_PROGRESS
-- Scope:
-  - socket room isolation validation
-  - conversation-pane behavior against API
-  - event contract consistency
+- Acceptance:
+  - validate per-user thread isolation
+  - add unread/read-state plan + minimal patch if safe
 
-### QA-001 Integration smoke packet
+### QA-002 End-to-end validation
 - Owner: subagent-qa
 - Status: IN_PROGRESS
-- Scope:
-  - register/login/book/send-message smoke script
-  - bug list + repro steps
+- Acceptance:
+  - run auth->listing->offer->accept + services->booking + chat flow
+  - report pass/fail with repro steps
 
-## Merge Gate
-All IN_PROGRESS tasks must provide:
-1. Changed files
-2. Commands run
-3. Pass/fail evidence
-4. Open risks
+### DEVOPS-001 Stability pass
+- Owner: subagent-devops
+- Status: IN_PROGRESS
+- Acceptance:
+  - eliminate frequent port-conflict pain
+  - add startup helper scripts/docs for clean dev run
+
+## Reporting format (required)
+1. Task ID
+2. Changed files
+3. Validation evidence
+4. Risks/open items

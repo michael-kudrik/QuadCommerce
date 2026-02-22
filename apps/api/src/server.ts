@@ -54,7 +54,9 @@ interface ChatMessageDoc extends mongoose.Document {
 }
 
 interface ListingDoc extends mongoose.Document {
+  sellerUserId?: mongoose.Types.ObjectId;
   sellerName: string;
+  imageUrl?: string;
   title: string;
   description: string;
   category: "textbook" | "dorm" | "other";
@@ -115,7 +117,9 @@ const chatMessageSchema = new Schema<ChatMessageDoc>(
 
 const listingSchema = new Schema<ListingDoc>(
   {
+    sellerUserId: { type: Schema.Types.ObjectId, required: false, index: true },
     sellerName: { type: String, required: true },
+    imageUrl: { type: String, required: false },
     title: { type: String, required: true },
     description: { type: String, required: true },
     category: { type: String, enum: ["textbook", "dorm", "other"], required: true },
@@ -155,9 +159,9 @@ const loginSchema = z.object({
 });
 
 const createListingSchema = z.object({
-  sellerName: z.string().min(2),
   title: z.string().min(3),
   description: z.string().min(5),
+  imageUrl: z.string().max(2_000_000).optional().or(z.literal("")),
   category: z.enum(["textbook", "dorm", "other"]),
   offerWindowHours: z.number().int().min(1).max(168).default(48)
 });
@@ -213,9 +217,31 @@ app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 
+if (process.env.NODE_ENV === "production" && JWT_SECRET === "dev-secret-change-me") {
+  console.warn("JWT_SECRET is using the development fallback in production. Set a strong JWT_SECRET.");
+}
+
+const jwtPayloadSchema = z.object({
+  sub: z
+    .string()
+    .min(1)
+    .refine((v) => mongoose.Types.ObjectId.isValid(v), "Invalid subject")
+});
+
+function verifyTokenSubject(token: string): string | null {
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ["HS256"] });
+    const parsed = jwtPayloadSchema.safeParse(decoded);
+    return parsed.success ? parsed.data.sub : null;
+  } catch {
+    return null;
+  }
+}
+
 function signToken(user: UserDoc) {
   return jwt.sign({ sub: user._id.toString(), role: user.role, email: user.email }, JWT_SECRET, {
-    expiresIn: "7d"
+    expiresIn: "7d",
+    algorithm: "HS256"
   });
 }
 
@@ -224,21 +250,23 @@ async function auth(req: express.Request, res: express.Response, next: express.N
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   const token = match?.[1]?.trim() || "";
   if (!token) return res.status(401).json({ error: "Unauthorized" });
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as { sub: string };
-    const user = await User.findById(payload.sub);
-    if (!user) return res.status(401).json({ error: "Unauthorized" });
-    (req as any).user = user;
-    next();
-  } catch {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+
+  const subject = verifyTokenSubject(token);
+  if (!subject) return res.status(401).json({ error: "Unauthorized" });
+
+  const user = await User.findById(subject);
+  if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+  (req as any).user = user;
+  next();
 }
 
 function serializeListing(doc: ListingDoc) {
   return {
     id: doc._id.toString(),
+    sellerUserId: doc.sellerUserId?.toString(),
     sellerName: doc.sellerName,
+    imageUrl: doc.imageUrl,
     title: doc.title,
     description: doc.description,
     category: doc.category,
@@ -339,12 +367,23 @@ app.get("/api/listings", async (_req, res) => {
   res.json(docs.map(serializeListing));
 });
 
-app.post("/api/listings", async (req, res) => {
+app.post("/api/listings", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
   const parsed = createListingSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const ends = new Date(Date.now() + parsed.data.offerWindowHours * 3600000);
-  const doc = await Listing.create({ ...parsed.data, status: "OPEN", offerWindowEndsAt: ends, offers: [] });
+  const doc = await Listing.create({
+    sellerUserId: user._id,
+    sellerName: user.name,
+    imageUrl: parsed.data.imageUrl || undefined,
+    title: parsed.data.title,
+    description: parsed.data.description,
+    category: parsed.data.category,
+    status: "OPEN",
+    offerWindowEndsAt: ends,
+    offers: []
+  });
   await broadcastListings();
   return res.status(201).json(serializeListing(doc));
 });
@@ -598,6 +637,34 @@ app.post("/api/chats/:peerUserId", auth, async (req, res) => {
   res.status(201).json(payload);
 });
 
+app.post("/api/chats/:peerUserId/read", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
+  const parsedPeer = chatPeerParamSchema.safeParse(req.params);
+  if (!parsedPeer.success) return res.status(400).json({ error: "Invalid peer user id" });
+
+  const peer = await User.findById(parsedPeer.data.peerUserId);
+  if (!peer) return res.status(404).json({ error: "Peer user not found" });
+
+  const latestIncoming = await ChatMessage.findOne({
+    senderUserId: peer._id,
+    recipientUserId: user._id
+  })
+    .sort({ createdAt: -1 })
+    .select({ _id: 1, createdAt: 1 });
+
+  const payload = {
+    peerUserId: peer._id.toString(),
+    readerUserId: user._id.toString(),
+    readAt: new Date().toISOString(),
+    latestIncomingMessageId: latestIncoming?._id?.toString() || null,
+    latestIncomingMessageAt: latestIncoming?.createdAt?.toISOString() || null
+  };
+
+  io.to(`user:${peer._id.toString()}`).emit("chat:read", payload);
+  io.to(`user:${user._id.toString()}`).emit("chat:read", payload);
+  return res.json(payload);
+});
+
 const MONGO_URI = process.env.MONGO_URI ?? "mongodb://127.0.0.1:27017/quadcommerce";
 const port = Number(process.env.PORT ?? 4000);
 
@@ -641,11 +708,9 @@ async function start() {
 io.on("connection", (socket) => {
   const token = (socket.handshake.auth?.token || socket.handshake.query?.token || "") as string;
   if (token) {
-    try {
-      const payload = jwt.verify(token, JWT_SECRET) as { sub: string };
-      socket.join(`user:${payload.sub}`);
-    } catch {
-      // ignore invalid token for socket room join
+    const subject = verifyTokenSubject(token);
+    if (subject) {
+      socket.join(`user:${subject}`);
     }
   }
   socket.emit("connected", { ok: true });

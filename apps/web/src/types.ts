@@ -12,7 +12,9 @@ export type Offer = { id: string; bidderName: string; amount: number; createdAt:
 
 export type Listing = {
   id: string;
+  sellerUserId?: string;
   sellerName: string;
+  imageUrl?: string;
   title: string;
   description: string;
   category: "textbook" | "dorm" | "other";
@@ -48,4 +50,12 @@ export type ChatMessage = {
   senderEmail: string;
   text: string;
   createdAt: string;
+};
+
+export type ChatReadReceipt = {
+  peerUserId: string;
+  readerUserId: string;
+  readAt: string;
+  latestIncomingMessageId: string | null;
+  latestIncomingMessageAt: string | null;
 };

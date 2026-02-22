@@ -1,10 +1,11 @@
-# Sub-Agent Run Log
+# Sub-Agent Runs
 
-## 2026-02-21 Kickoff
-Orchestrator started 4 parallel sub-agent runs:
-- backend hardening
-- frontend reliability
-- realtime/chat validation
-- QA integration smoke
+## ORCH-002 kickoff
+Parallel runs started for:
+- BE-002
+- FE-002
+- RT-002
+- QA-002
+- DEVOPS-001
 
-Results will be consolidated here after completion.
+Pending: consolidate outputs and execute integration gate.

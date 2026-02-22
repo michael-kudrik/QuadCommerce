@@ -1,15 +1,24 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { API } from "../lib/config";
-import { ChatMessage } from "../types";
+import { ChatMessage, ChatReadReceipt } from "../types";
 
-export function ChatsPage({ token }: { token: string }) {
+type Conversation = {
+  peerUserId: string;
+  peerName: string;
+  peerEmail: string;
+  lastText: string;
+};
+
+export function ChatsPage({ token, meUserId }: { token: string; meUserId: string }) {
   const [users, setUsers] = useState<Array<{ id: string; name: string; email: string }>>([]);
-  const [conversations, setConversations] = useState<Array<{ peerUserId: string; peerName: string; peerEmail: string; lastText: string }>>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activePeerUserId, setActivePeerUserId] = useState<string>("");
   const activePeerRef = useRef("");
   const [text, setText] = useState("");
+  const [unreadByPeer, setUnreadByPeer] = useState<Record<string, number>>({});
+  const [lastReadByPeer, setLastReadByPeer] = useState<Record<string, string>>({});
 
   async function loadConversations() {
     const conv = await fetch(`${API}/chats/conversations`, { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.json());
@@ -17,10 +26,23 @@ export function ChatsPage({ token }: { token: string }) {
     if (!activePeerUserId && conv[0]?.peerUserId) setActivePeerUserId(conv[0].peerUserId);
   }
 
+  async function markConversationRead(peerUserId: string) {
+    if (!peerUserId) return;
+    await fetch(`${API}/chats/${peerUserId}/read`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    setUnreadByPeer((prev) => {
+      if (!prev[peerUserId]) return prev;
+      return { ...prev, [peerUserId]: 0 };
+    });
+  }
+
   async function loadMessages(peerUserId: string) {
     if (!peerUserId) return setMessages([]);
     const msgs = await fetch(`${API}/chats/${peerUserId}`, { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.json());
     setMessages(msgs);
+    await markConversationRead(peerUserId);
   }
 
   useEffect(() => {
@@ -34,15 +56,39 @@ export function ChatsPage({ token }: { token: string }) {
     const chatSocket = io("/", { transports: ["websocket"], auth: { token } });
     const onNew = (m: ChatMessage) => {
       const activePeer = activePeerRef.current;
-      if (m.senderUserId === activePeer || m.recipientUserId === activePeer) setMessages((prev) => [...prev, m]);
+      const isFromActivePeer = m.senderUserId === activePeer;
+      const isToActivePeer = m.recipientUserId === activePeer;
+
+      if (isFromActivePeer || isToActivePeer) {
+        setMessages((prev) => [...prev, m]);
+      }
+
+      if (!isFromActivePeer && m.recipientUserId === meUserId) {
+        setUnreadByPeer((prev) => ({ ...prev, [m.senderUserId]: (prev[m.senderUserId] || 0) + 1 }));
+      }
+
+      if (isFromActivePeer && m.recipientUserId === meUserId) {
+        markConversationRead(activePeer).catch(() => undefined);
+      }
+
       loadConversations();
     };
+
+    const onRead = (receipt: ChatReadReceipt) => {
+      if (receipt.readerUserId === activePeerRef.current) {
+        setLastReadByPeer((prev) => ({ ...prev, [receipt.readerUserId]: receipt.readAt }));
+      }
+    };
+
     chatSocket.on("chat:new", onNew);
+    chatSocket.on("chat:read", onRead);
+
     return () => {
       chatSocket.off("chat:new", onNew);
+      chatSocket.off("chat:read", onRead);
       chatSocket.disconnect();
     };
-  }, [token]);
+  }, [token, meUserId]);
 
   useEffect(() => {
     loadMessages(activePeerUserId);
@@ -69,7 +115,10 @@ export function ChatsPage({ token }: { token: string }) {
           <div style={{ display: "grid", gap: 6, marginBottom: 10 }}>
             {conversations.map((c) => (
               <button key={c.peerUserId} className="btn" style={{ textAlign: "left", background: c.peerUserId === activePeerUserId ? "var(--chip)" : "var(--bg-elev)" }} onClick={() => setActivePeerUserId(c.peerUserId)}>
-                <div><strong>{c.peerName}</strong></div>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <strong>{c.peerName}</strong>
+                  {(unreadByPeer[c.peerUserId] || 0) > 0 ? <span className="meta">{unreadByPeer[c.peerUserId]} new</span> : null}
+                </div>
                 <div className="meta" style={{ margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.lastText}</div>
               </button>
             ))}
@@ -97,9 +146,10 @@ export function ChatsPage({ token }: { token: string }) {
             {messages.length === 0 ? <p className="muted">No messages yet.</p> : null}
           </div>
 
-          <form onSubmit={send} className="row" style={{ padding: 12, borderTop: "1px solid var(--border)" }}>
+          <form onSubmit={send} className="row" style={{ padding: 12, borderTop: "1px solid var(--border)", alignItems: "center" }}>
             <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder="Message…" disabled={!activePeerUserId} />
             <button className="btn primary" type="submit" disabled={!activePeerUserId}>Send</button>
+            {activePeerUserId && lastReadByPeer[activePeerUserId] ? <span className="meta">Seen {new Date(lastReadByPeer[activePeerUserId]).toLocaleTimeString()}</span> : null}
           </form>
         </div>
       </div>
