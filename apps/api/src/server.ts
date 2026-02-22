@@ -61,6 +61,9 @@ interface ListingDoc extends mongoose.Document {
   description: string;
   category: "textbook" | "dorm" | "other";
   status: ListingStatus;
+  startPrice: number;
+  floorPrice: number;
+  startsAt: Date;
   offerWindowEndsAt: Date;
   acceptedOfferId?: mongoose.Types.ObjectId;
   offers: Array<{ _id: mongoose.Types.ObjectId; bidderName: string; amount: number; createdAt: Date }>;
@@ -124,6 +127,9 @@ const listingSchema = new Schema<ListingDoc>(
     description: { type: String, required: true },
     category: { type: String, enum: ["textbook", "dorm", "other"], required: true },
     status: { type: String, enum: ["OPEN", "SOLD", "CLOSED"], default: "OPEN" },
+    startPrice: { type: Number, required: true, default: 0 },
+    floorPrice: { type: Number, required: true, default: 0 },
+    startsAt: { type: Date, required: true, default: Date.now },
     offerWindowEndsAt: { type: Date, required: true },
     acceptedOfferId: { type: Schema.Types.ObjectId, required: false },
     offers: {
@@ -163,7 +169,12 @@ const createListingSchema = z.object({
   description: z.string().min(5),
   imageUrl: z.string().max(2_000_000).optional().or(z.literal("")),
   category: z.enum(["textbook", "dorm", "other"]),
+  startPrice: z.number().positive(),
+  floorPrice: z.number().nonnegative(),
   offerWindowHours: z.number().int().min(1).max(168).default(48)
+}).refine((data) => data.startPrice >= data.floorPrice, {
+  message: "Start price must be greater than or equal to floor price",
+  path: ["floorPrice"]
 });
 
 const createOfferSchema = z.object({
@@ -212,8 +223,15 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, { cors: { origin: "*" } });
 
+// --- Middleware ---
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "2mb" })); // Increased limit for base64 images
+
+// Basic Request Logger
+app.use((req, _res, next) => {
+  console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
+  next();
+});
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 
@@ -262,6 +280,20 @@ async function auth(req: express.Request, res: express.Response, next: express.N
 }
 
 function serializeListing(doc: ListingDoc) {
+  const now = Date.now();
+  const start = doc.startsAt.getTime();
+  const end = doc.offerWindowEndsAt.getTime();
+  let currentPrice = doc.startPrice;
+
+  if (now >= end) {
+    currentPrice = doc.floorPrice;
+  } else if (now > start) {
+    const totalDuration = end - start;
+    const elapsed = now - start;
+    const priceDiff = doc.startPrice - doc.floorPrice;
+    currentPrice = doc.startPrice - (elapsed / totalDuration) * priceDiff;
+  }
+
   return {
     id: doc._id.toString(),
     sellerUserId: doc.sellerUserId?.toString(),
@@ -271,6 +303,9 @@ function serializeListing(doc: ListingDoc) {
     description: doc.description,
     category: doc.category,
     status: doc.status,
+    startPrice: doc.startPrice,
+    floorPrice: doc.floorPrice,
+    currentPrice: Number(currentPrice.toFixed(2)),
     offerWindowEndsAt: doc.offerWindowEndsAt.toISOString(),
     acceptedOfferId: doc.acceptedOfferId?.toString(),
     createdAt: doc.createdAt.toISOString(),
@@ -372,7 +407,8 @@ app.post("/api/listings", auth, async (req, res) => {
   const parsed = createListingSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const ends = new Date(Date.now() + parsed.data.offerWindowHours * 3600000);
+  const startsAt = new Date();
+  const endsAt = new Date(startsAt.getTime() + parsed.data.offerWindowHours * 3600000);
   const doc = await Listing.create({
     sellerUserId: user._id,
     sellerName: user.name,
@@ -380,8 +416,11 @@ app.post("/api/listings", auth, async (req, res) => {
     title: parsed.data.title,
     description: parsed.data.description,
     category: parsed.data.category,
+    startPrice: parsed.data.startPrice,
+    floorPrice: parsed.data.floorPrice,
+    startsAt,
     status: "OPEN",
-    offerWindowEndsAt: ends,
+    offerWindowEndsAt: endsAt,
     offers: []
   });
   await broadcastListings();
@@ -714,6 +753,12 @@ io.on("connection", (socket) => {
     }
   }
   socket.emit("connected", { ok: true });
+});
+
+// --- Global Error Handler ---
+app.use((err: any, _req: express.Response, res: express.Response, _next: express.NextFunction) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({ error: "Internal Server Error", message: err.message });
 });
 
 start().catch((err) => {

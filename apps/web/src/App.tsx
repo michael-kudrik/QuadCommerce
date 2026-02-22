@@ -10,7 +10,6 @@ import { ChatsPage } from "./pages/ChatsPage";
 import { SellProductsPage } from "./pages/SellProductsPage";
 import { User } from "./types";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import "./App.css";
 
 function readStoredUser(): User | null {
   const raw = localStorage.getItem("qc-me");
@@ -38,6 +37,11 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
+    if (theme === "dark") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
     localStorage.setItem("qc-theme", theme);
   }, [theme]);
 
@@ -55,20 +59,22 @@ export function App() {
   }
 
   return (
-    <div className="container">
+    <div className="max-w-7xl mx-auto px-4 pb-12 antialiased">
       <TopNav isAuthed={Boolean(token)} logout={logout} theme={theme} setTheme={setTheme} />
-      <ErrorBoundary>
-        <Routes>
-          <Route path="/login" element={<RedirectIfAuthed token={token}><LoginPage setToken={setToken} setMe={setMe} /></RedirectIfAuthed>} />
-          <Route path="/register" element={<RedirectIfAuthed token={token}><RegisterPage setToken={setToken} setMe={setMe} /></RedirectIfAuthed>} />
-          <Route path="/" element={<RequireAuth token={token}><DashboardPage token={token} /></RequireAuth>} />
-          <Route path="/profile" element={<RequireAuth token={token}><ProfilePage token={token} me={me} setMe={setMe} /></RequireAuth>} />
-          <Route path="/services" element={<RequireAuth token={token}><ServicesPage token={token} me={me} /></RequireAuth>} />
-          <Route path="/chats" element={<RequireAuth token={token}><ChatsPage token={token} meUserId={me?.id || ""} /></RequireAuth>} />
-          <Route path="/sell" element={<RequireAuth token={token}><SellProductsPage token={token} /></RequireAuth>} />
-          <Route path="*" element={<Navigate to={token ? "/" : "/login"} replace />} />
-        </Routes>
-      </ErrorBoundary>
+      <div className="mt-8">
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/login" element={<RedirectIfAuthed token={token}><LoginPage setToken={setToken} setMe={setMe} /></RedirectIfAuthed>} />
+            <Route path="/register" element={<RedirectIfAuthed token={token}><RegisterPage setToken={setToken} setMe={setMe} /></RedirectIfAuthed>} />
+            <Route path="/" element={<RequireAuth token={token}><DashboardPage token={token} /></RequireAuth>} />
+            <Route path="/profile" element={<RequireAuth token={token}><ProfilePage token={token} me={me} setMe={setMe} /></RequireAuth>} />
+            <Route path="/services" element={<RequireAuth token={token}><ServicesPage token={token} me={me} /></RequireAuth>} />
+            <Route path="/chats" element={<RequireAuth token={token}><ChatsPage token={token} meUserId={me?.id || ""} /></RequireAuth>} />
+            <Route path="/sell" element={<RequireAuth token={token}><SellProductsPage token={token} /></RequireAuth>} />
+            <Route path="*" element={<Navigate to={token ? "/" : "/login"} replace />} />
+          </Routes>
+        </ErrorBoundary>
+      </div>
     </div>
   );
 }
