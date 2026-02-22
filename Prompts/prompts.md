@@ -1,5 +1,5 @@
 <!-- 
-    Put all the prompts below in this file so it keeps a history of the changes that it makes. Additionally, rephrase each prompt in technical terms. Additionally put the responses in a diffwerent section of this file
+    Put all the prompts below in this file so it keeps a history of the changes that it makes. Additionally, rephrase each prompt in technical terms. Additionally put the responses in a diffwerent section of this file a
 -->
 
 
