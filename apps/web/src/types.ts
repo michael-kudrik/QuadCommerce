@@ -5,6 +5,9 @@ export type User = {
   name: string;
   email: string;
   role: Role;
+  description?: string;
+  portfolioWebsite?: string;
+  profileImageUrl?: string;
   schoolVerified: boolean;
 };
 
@@ -30,6 +33,7 @@ export type Service = {
   description: string;
   durationMinutes: number;
   priceUsd: number;
+  imageUrl?: string;
   isActive: boolean;
 };
 
@@ -39,7 +43,8 @@ export type Appointment = {
   customerName: string;
   customerEmail: string;
   startAt: string;
-  status: "scheduled" | "completed" | "cancelled";
+  status: "pending" | "approved" | "denied" | "scheduled" | "completed" | "cancelled";
+  notes?: string;
 };
 
 export type ChatMessage = {

@@ -127,6 +127,14 @@ p, .meta, h3, .offerRow span {
   margin-bottom: 8px;
 }
 
+.serviceImageFallback {
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--border);
+  background: var(--chip);
+  font-size: 2rem;
+}
+
 .fileHint {
   font-size: .8rem;
   color: var(--muted);
@@ -151,4 +159,34 @@ p, .meta, h3, .offerRow span {
 .emptyIcon {
   width: 52px; height: 52px; margin: 0 auto .6rem; border-radius: 50%;
   display: grid; place-items: center; background: var(--chip); border: 1px solid var(--border);
+}
+
+.salesChart {
+  margin-top: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: .8rem;
+  background: color-mix(in oklab, var(--bg-elev) 90%, transparent);
+}
+.chartRow {
+  display: grid;
+  grid-template-columns: 130px 1fr 40px;
+  align-items: center;
+  gap: .6rem;
+  margin-top: .55rem;
+}
+.chartLabel { color: var(--muted); font-size: .9rem; }
+.chartTrack {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--chip);
+  overflow: hidden;
+}
+.chartBar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), #4f7cff);
+}
+.chartBarSecondary {
+  background: linear-gradient(90deg, var(--accent-2), #22c55e);
 }

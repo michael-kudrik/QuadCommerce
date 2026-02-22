@@ -17,6 +17,8 @@ interface UserDoc extends mongoose.Document {
   email: string;
   passwordHash: string;
   role: UserRole;
+  description?: string;
+  portfolioWebsite?: string;
 }
 
 interface ServiceDoc extends mongoose.Document {
@@ -25,6 +27,7 @@ interface ServiceDoc extends mongoose.Document {
   description: string;
   durationMinutes: number;
   priceUsd: number;
+  imageUrl?: string;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -37,7 +40,7 @@ interface AppointmentDoc extends mongoose.Document {
   customerName: string;
   customerEmail: string;
   startAt: Date;
-  status: "scheduled" | "completed" | "cancelled";
+  status: "pending" | "approved" | "denied" | "completed" | "cancelled" | "scheduled";
   notes?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -73,7 +76,9 @@ const userSchema = new Schema<UserDoc>(
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true, lowercase: true },
     passwordHash: { type: String, required: true },
-    role: { type: String, enum: ["student", "businessOwner"], default: "student" }
+    role: { type: String, enum: ["student", "businessOwner"], default: "student" },
+    description: { type: String, required: false, default: "" },
+    portfolioWebsite: { type: String, required: false, default: "" }
   },
   { timestamps: true }
 );
@@ -98,7 +103,7 @@ const appointmentSchema = new Schema<AppointmentDoc>(
     customerName: { type: String, required: true },
     customerEmail: { type: String, required: true },
     startAt: { type: Date, required: true, index: true },
-    status: { type: String, enum: ["scheduled", "completed", "cancelled"], default: "scheduled" },
+    status: { type: String, enum: ["pending", "approved", "denied", "completed", "cancelled", "scheduled"], default: "pending" },
     notes: { type: String }
   },
   { timestamps: true }
@@ -167,7 +172,8 @@ const createListingSchema = z.object({
 });
 
 const createOfferSchema = z.object({
-  bidderName: z.string().min(2),
+  // kept optional for backward compatibility with older clients; server ignores it.
+  bidderName: z.string().min(2).optional(),
   amount: z.number().positive()
 });
 
@@ -175,7 +181,8 @@ const createServiceSchema = z.object({
   name: z.string().min(2),
   description: z.string().min(5),
   durationMinutes: z.number().int().min(15).max(480),
-  priceUsd: z.number().nonnegative()
+  priceUsd: z.number().nonnegative(),
+  imageUrl: z.string().max(2_000_000).optional().or(z.literal(""))
 });
 
 const updateServiceSchema = createServiceSchema.partial().extend({
@@ -189,12 +196,18 @@ const createAppointmentSchema = z.object({
 });
 
 const updateAppointmentSchema = z.object({
-  status: z.enum(["scheduled", "completed", "cancelled"]) 
+  status: z.enum(["approved", "completed", "cancelled"])
+});
+
+const denyAppointmentSchema = z.object({
+  reason: z.string().min(2).max(500).optional()
 });
 
 const updateProfileSchema = z.object({
   name: z.string().min(2).optional(),
-  role: z.enum(["student", "businessOwner"]).optional()
+  role: z.enum(["student", "businessOwner"]).optional(),
+  description: z.string().max(1000).optional(),
+  portfolioWebsite: z.union([z.literal(""), z.string().url()]).optional()
 });
 
 const chatMessageSchemaInput = z.object({
@@ -207,6 +220,17 @@ const chatPeerParamSchema = z.object({
     .min(1)
     .refine((v) => mongoose.Types.ObjectId.isValid(v), "Invalid peer user id")
 });
+
+const objectIdSchema = z
+  .string()
+  .min(1)
+  .refine((v) => mongoose.Types.ObjectId.isValid(v), "Invalid id");
+
+function parseObjectId(id: string) {
+  const parsed = objectIdSchema.safeParse(id);
+  if (!parsed.success) return null;
+  return new mongoose.Types.ObjectId(parsed.data);
+}
 
 const app = express();
 const httpServer = createServer(app);
@@ -261,6 +285,19 @@ async function auth(req: express.Request, res: express.Response, next: express.N
   next();
 }
 
+
+function serializeUser(user: UserDoc) {
+  return {
+    id: user._id.toString(),
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    description: user.description || "",
+    portfolioWebsite: user.portfolioWebsite || "",
+    schoolVerified: true
+  };
+}
+
 function serializeListing(doc: ListingDoc) {
   return {
     id: doc._id.toString(),
@@ -277,6 +314,20 @@ function serializeListing(doc: ListingDoc) {
     offers: [...doc.offers]
       .sort((a, b) => b.amount - a.amount)
       .map((o) => ({ id: o._id.toString(), bidderName: o.bidderName, amount: o.amount, createdAt: o.createdAt.toISOString() }))
+  };
+}
+
+function serializeAppointment(a: AppointmentDoc) {
+  return {
+    id: a._id.toString(),
+    serviceId: a.serviceId.toString(),
+    businessOwnerId: a.businessOwnerId.toString(),
+    customerUserId: a.customerUserId.toString(),
+    customerName: a.customerName,
+    customerEmail: a.customerEmail,
+    startAt: a.startAt.toISOString(),
+    status: a.status,
+    notes: a.notes
   };
 }
 
@@ -309,7 +360,7 @@ app.post("/api/auth/register", async (req, res) => {
   });
 
   const token = signToken(user);
-  return res.status(201).json({ token, user: { id: user._id.toString(), name: user.name, email: user.email, role: user.role, schoolVerified: true } });
+  return res.status(201).json({ token, user: serializeUser(user) });
 });
 
 app.post("/api/auth/login", async (req, res) => {
@@ -322,12 +373,12 @@ app.post("/api/auth/login", async (req, res) => {
   }
 
   const token = signToken(user);
-  return res.json({ token, user: { id: user._id.toString(), name: user.name, email: user.email, role: user.role, schoolVerified: true } });
+  return res.json({ token, user: serializeUser(user) });
 });
 
 app.get("/api/me", auth, async (req, res) => {
   const user = (req as any).user as UserDoc;
-  return res.json({ id: user._id.toString(), name: user.name, email: user.email, role: user.role, schoolVerified: true });
+  return res.json(serializeUser(user));
 });
 
 app.patch("/api/me", auth, async (req, res) => {
@@ -337,27 +388,45 @@ app.patch("/api/me", auth, async (req, res) => {
 
   if (parsed.data.name) user.name = parsed.data.name;
   if (parsed.data.role) user.role = parsed.data.role;
+  if (parsed.data.description !== undefined) user.description = parsed.data.description;
+  if (parsed.data.portfolioWebsite !== undefined) user.portfolioWebsite = parsed.data.portfolioWebsite;
   await user.save();
 
-  return res.json({ id: user._id.toString(), name: user.name, email: user.email, role: user.role, schoolVerified: true });
+  return res.json(serializeUser(user));
 });
 
 app.get("/api/dashboard", auth, async (req, res) => {
   const user = (req as any).user as UserDoc;
-  const [listingsCount, soldCount, appointmentsCount, offersAgg, servicesCount] = await Promise.all([
-    Listing.countDocuments(),
-    Listing.countDocuments({ status: "SOLD" }),
+  const [listingsCount, soldCount, appointmentsCount, offersAgg, servicesCount, servicesSoldCount] = await Promise.all([
+    Listing.countDocuments({ sellerUserId: user._id }),
+    Listing.countDocuments({ sellerUserId: user._id, status: "SOLD" }),
     user.role === "businessOwner"
       ? Appointment.countDocuments({ businessOwnerId: user._id })
       : Appointment.countDocuments({ customerUserId: user._id }),
-    Listing.aggregate([{ $unwind: "$offers" }, { $count: "total" }]),
-    user.role === "businessOwner" ? Service.countDocuments({ ownerId: user._id }) : Promise.resolve(0)
+    Listing.aggregate([
+      { $match: { sellerUserId: user._id } },
+      { $unwind: "$offers" },
+      { $count: "total" }
+    ]),
+    user.role === "businessOwner" ? Service.countDocuments({ ownerId: user._id }) : Promise.resolve(0),
+    user.role === "businessOwner" ? Appointment.countDocuments({ businessOwnerId: user._id, status: "completed" }) : Promise.resolve(0)
   ]);
 
   const totalOffers = offersAgg[0]?.total ?? 0;
   return res.json({
     user: { id: user._id.toString(), role: user.role },
-    stats: { listingsCount, soldCount, totalOffers, appointmentsCount, servicesCount }
+    stats: {
+      listingsCount,
+      soldCount,
+      totalOffers,
+      appointmentsCount,
+      servicesCount,
+      servicesSoldCount,
+      salesByType: {
+        productsSold: soldCount,
+        servicesSold: servicesSoldCount
+      }
+    }
   });
 });
 
@@ -388,16 +457,22 @@ app.post("/api/listings", auth, async (req, res) => {
   return res.status(201).json(serializeListing(doc));
 });
 
-app.post("/api/listings/:id/offers", async (req, res) => {
+app.post("/api/listings/:id/offers", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
   const doc = await Listing.findById(req.params.id);
   if (!doc) return res.status(404).json({ error: "Listing not found" });
   if (doc.status !== "OPEN") return res.status(400).json({ error: "Listing is not open" });
   if (doc.offerWindowEndsAt.getTime() < Date.now()) return res.status(400).json({ error: "Offer window has ended" });
 
+  if (doc.sellerUserId?.toString() === user._id.toString()) {
+    return res.status(403).json({ error: "Sellers cannot bid on their own listing" });
+  }
+
   const parsed = createOfferSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  doc.offers.push({ bidderName: parsed.data.bidderName, amount: parsed.data.amount, createdAt: new Date() } as any);
+  // Enforce authenticated identity; ignore bidderName supplied by client.
+  doc.offers.push({ bidderName: user.name, amount: parsed.data.amount, createdAt: new Date() } as any);
   await doc.save();
   await broadcastListings();
 
@@ -405,12 +480,19 @@ app.post("/api/listings/:id/offers", async (req, res) => {
   return res.status(201).json({ id: added._id.toString(), bidderName: added.bidderName, amount: added.amount, createdAt: added.createdAt.toISOString() });
 });
 
-app.post("/api/listings/:id/accept-offer", async (req, res) => {
-  const doc = await Listing.findById(req.params.id);
+app.post("/api/listings/:id/accept-offer", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
+  const listingId = parseObjectId(req.params.id);
+  if (!listingId) return res.status(400).json({ error: "Invalid listing id" });
+
+  const doc = await Listing.findById(listingId);
   if (!doc) return res.status(404).json({ error: "Listing not found" });
   if (doc.status !== "OPEN") return res.status(400).json({ error: "Listing is not open" });
+  if (doc.sellerUserId?.toString() !== user._id.toString()) {
+    return res.status(403).json({ error: "Only the listing seller can accept an offer" });
+  }
 
-  const parsedId = z.string().min(1).safeParse(req.body.offerId);
+  const parsedId = objectIdSchema.safeParse(req.body.offerId);
   if (!parsedId.success) return res.status(400).json({ error: "Invalid offerId" });
 
   const offer = doc.offers.find((o) => o._id.toString() === parsedId.data);
@@ -427,8 +509,9 @@ app.post("/api/listings/:id/accept-offer", async (req, res) => {
 // Services (CRUD)
 app.get("/api/services", auth, async (req, res) => {
   const user = (req as any).user as UserDoc;
-  const docs = await Service.find({ ownerId: user._id }).sort({ createdAt: -1 });
-  res.json(docs.map((d) => ({ id: d._id.toString(), name: d.name, description: d.description, durationMinutes: d.durationMinutes, priceUsd: d.priceUsd, isActive: d.isActive })));
+  const filter = user.role === "businessOwner" ? { ownerId: user._id } : { isActive: true };
+  const docs = await Service.find(filter).sort({ createdAt: -1 });
+  res.json(docs.map((d) => ({ id: d._id.toString(), name: d.name, description: d.description, durationMinutes: d.durationMinutes, priceUsd: d.priceUsd, imageUrl: d.imageUrl, isActive: d.isActive })));
 });
 
 app.post("/api/services", auth, async (req, res) => {
@@ -438,8 +521,8 @@ app.post("/api/services", auth, async (req, res) => {
   const parsed = createServiceSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const created = await Service.create({ ownerId: user._id, ...parsed.data, isActive: true });
-  return res.status(201).json({ id: created._id.toString(), name: created.name, description: created.description, durationMinutes: created.durationMinutes, priceUsd: created.priceUsd, isActive: created.isActive });
+  const created = await Service.create({ ownerId: user._id, ...parsed.data, imageUrl: parsed.data.imageUrl || undefined, isActive: true });
+  return res.status(201).json({ id: created._id.toString(), name: created.name, description: created.description, durationMinutes: created.durationMinutes, priceUsd: created.priceUsd, imageUrl: created.imageUrl, isActive: created.isActive });
 });
 
 app.patch("/api/services/:id", auth, async (req, res) => {
@@ -447,9 +530,10 @@ app.patch("/api/services/:id", auth, async (req, res) => {
   const parsed = updateServiceSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const updated = await Service.findOneAndUpdate({ _id: req.params.id, ownerId: user._id }, { $set: parsed.data }, { new: true });
+  const patch = { ...parsed.data, ...(parsed.data.imageUrl !== undefined ? { imageUrl: parsed.data.imageUrl || undefined } : {}) };
+  const updated = await Service.findOneAndUpdate({ _id: req.params.id, ownerId: user._id }, { $set: patch }, { new: true });
   if (!updated) return res.status(404).json({ error: "Service not found" });
-  return res.json({ id: updated._id.toString(), name: updated.name, description: updated.description, durationMinutes: updated.durationMinutes, priceUsd: updated.priceUsd, isActive: updated.isActive });
+  return res.json({ id: updated._id.toString(), name: updated.name, description: updated.description, durationMinutes: updated.durationMinutes, priceUsd: updated.priceUsd, imageUrl: updated.imageUrl, isActive: updated.isActive });
 });
 
 app.delete("/api/services/:id", auth, async (req, res) => {
@@ -468,6 +552,9 @@ app.post("/api/appointments", auth, async (req, res) => {
   const service = await Service.findById(parsed.data.serviceId);
   if (!service || !service.isActive) return res.status(404).json({ error: "Service not found" });
 
+  const owner = await User.findById(service.ownerId);
+  if (!owner) return res.status(404).json({ error: "Service owner not found" });
+
   const created = await Appointment.create({
     serviceId: service._id,
     businessOwnerId: service.ownerId,
@@ -475,40 +562,35 @@ app.post("/api/appointments", auth, async (req, res) => {
     customerName: user.name,
     customerEmail: user.email,
     startAt: new Date(parsed.data.startAt),
-    status: "scheduled",
+    status: "pending",
     notes: parsed.data.notes
   });
 
-  return res.status(201).json({
-    id: created._id.toString(),
-    serviceId: created.serviceId.toString(),
-    businessOwnerId: created.businessOwnerId.toString(),
-    customerUserId: created.customerUserId.toString(),
-    customerName: created.customerName,
-    customerEmail: created.customerEmail,
-    startAt: created.startAt.toISOString(),
-    status: created.status,
-    notes: created.notes
+  const hasExistingDirectChat = await ChatMessage.exists({
+    $or: [
+      { senderUserId: user._id, recipientUserId: owner._id },
+      { senderUserId: owner._id, recipientUserId: user._id }
+    ]
   });
+
+  if (!hasExistingDirectChat) {
+    await ChatMessage.create({
+      senderUserId: user._id,
+      recipientUserId: owner._id,
+      senderName: user.name,
+      senderEmail: user.email,
+      text: `Hi ${owner.name}, I requested \"${service.name}\" for ${created.startAt.toLocaleString()}. Please approve or deny when you can.`
+    });
+  }
+
+  return res.status(201).json(serializeAppointment(created));
 });
 
 app.get("/api/appointments", auth, async (req, res) => {
   const user = (req as any).user as UserDoc;
   const filter = user.role === "businessOwner" ? { businessOwnerId: user._id } : { customerUserId: user._id };
   const docs = await Appointment.find(filter).sort({ startAt: 1 });
-  res.json(
-    docs.map((a) => ({
-      id: a._id.toString(),
-      serviceId: a.serviceId.toString(),
-      businessOwnerId: a.businessOwnerId.toString(),
-      customerUserId: a.customerUserId.toString(),
-      customerName: a.customerName,
-      customerEmail: a.customerEmail,
-      startAt: a.startAt.toISOString(),
-      status: a.status,
-      notes: a.notes
-    }))
-  );
+  res.json(docs.map(serializeAppointment));
 });
 
 app.patch("/api/appointments/:id", auth, async (req, res) => {
@@ -526,6 +608,70 @@ app.patch("/api/appointments/:id", auth, async (req, res) => {
   if (!updated) return res.status(404).json({ error: "Appointment not found" });
 
   return res.json({ id: updated._id.toString(), status: updated.status });
+});
+
+app.post("/api/appointments/:id/approve", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
+  if (user.role !== "businessOwner") return res.status(403).json({ error: "Only businessOwner can approve appointment requests" });
+
+  const appointmentId = parseObjectId(req.params.id);
+  if (!appointmentId) return res.status(400).json({ error: "Invalid appointment id" });
+
+  const appointment = await Appointment.findById(appointmentId);
+  if (!appointment) return res.status(404).json({ error: "Appointment not found" });
+  if (appointment.businessOwnerId.toString() !== user._id.toString()) {
+    return res.status(403).json({ error: "Only the appointment owner can approve this request" });
+  }
+
+  const service = await Service.findById(appointment.serviceId).select({ ownerId: 1 });
+  if (!service) return res.status(409).json({ error: "Associated service no longer exists" });
+  if (service.ownerId.toString() !== user._id.toString()) {
+    return res.status(403).json({ error: "Only the service owner can approve this request" });
+  }
+
+  if (!["pending", "scheduled"].includes(appointment.status)) {
+    return res.status(409).json({ error: `Appointment cannot be approved from status ${appointment.status}` });
+  }
+
+  appointment.status = "approved";
+  await appointment.save();
+  return res.json(serializeAppointment(appointment));
+});
+
+app.post("/api/appointments/:id/deny", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
+  if (user.role !== "businessOwner") return res.status(403).json({ error: "Only businessOwner can deny appointment requests" });
+
+  const parsed = denyAppointmentSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const appointmentId = parseObjectId(req.params.id);
+  if (!appointmentId) return res.status(400).json({ error: "Invalid appointment id" });
+
+  const appointment = await Appointment.findById(appointmentId);
+  if (!appointment) return res.status(404).json({ error: "Appointment not found" });
+  if (appointment.businessOwnerId.toString() !== user._id.toString()) {
+    return res.status(403).json({ error: "Only the appointment owner can deny this request" });
+  }
+
+  const service = await Service.findById(appointment.serviceId).select({ ownerId: 1 });
+  if (!service) return res.status(409).json({ error: "Associated service no longer exists" });
+  if (service.ownerId.toString() !== user._id.toString()) {
+    return res.status(403).json({ error: "Only the service owner can deny this request" });
+  }
+
+  if (!["pending", "scheduled"].includes(appointment.status)) {
+    return res.status(409).json({ error: `Appointment cannot be denied from status ${appointment.status}` });
+  }
+
+  appointment.status = "denied";
+  if (parsed.data.reason) {
+    appointment.notes = appointment.notes
+      ? `${appointment.notes}\n\nDenial reason: ${parsed.data.reason}`
+      : `Denial reason: ${parsed.data.reason}`;
+  }
+  await appointment.save();
+  return res.json(serializeAppointment(appointment));
 });
 
 // User-scoped direct chat

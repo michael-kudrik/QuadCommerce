@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { io } from "socket.io-client";
 import { API } from "../lib/config";
-import { Listing, Offer } from "../types";
+import { Listing, Offer, User } from "../types";
 
 const socket = io("/", { transports: ["websocket"] });
 
@@ -65,7 +65,7 @@ function normalizeListing(raw: any): Listing | null {
   };
 }
 
-export function SellProductsPage({ token }: { token: string }) {
+export function SellProductsPage({ token, me }: { token: string; me: User | null }) {
   const [listings, setListings] = useState<Listing[]>([]);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -172,8 +172,11 @@ export function SellProductsPage({ token }: { token: string }) {
     try {
       const res = await fetch(`${API}/listings/${listingId}/offers`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bidderName: String(fd.get("bidderName")), amount: Number(fd.get("amount")) })
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ amount: Number(fd.get("amount")) })
       });
       const body = await readJsonSafe(res);
       if (!res.ok) {
@@ -191,7 +194,7 @@ export function SellProductsPage({ token }: { token: string }) {
     try {
       const res = await fetch(`${API}/listings/${listingId}/accept-offer`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ offerId })
       });
       const body = await readJsonSafe(res);
@@ -231,15 +234,17 @@ export function SellProductsPage({ token }: { token: string }) {
             <h3>{l.title} <span className="pill">{l.status}</span></h3>
             <p className="meta">Seller: {l.sellerName}</p>
             <p>{l.description}</p>
-            {(Array.isArray(l.offers) ? l.offers : []).map((o) => (
-              <div className="offerRow" key={o.id}>
-                <span>{o.bidderName} · ${o.amount.toFixed(2)}</span>
-                {l.status === "OPEN" ? <button className="btn" onClick={() => accept(l.id, o.id)}>Accept</button> : null}
-              </div>
-            ))}
+            {(Array.isArray(l.offers) ? l.offers : []).map((o) => {
+              const canAccept = l.status === "OPEN" && Boolean(me?.id) && l.sellerUserId === me?.id;
+              return (
+                <div className="offerRow" key={o.id}>
+                  <span>{o.bidderName} · ${o.amount.toFixed(2)}</span>
+                  {canAccept ? <button className="btn" onClick={() => accept(l.id, o.id)}>Accept</button> : null}
+                </div>
+              );
+            })}
             {l.status === "OPEN" && (
               <form className="row" onSubmit={(e) => offer(l.id, e)}>
-                <input className="input" name="bidderName" placeholder="Bidder" required />
                 <input className="input" name="amount" type="number" step="0.01" required />
                 <button className="btn" type="submit">Offer</button>
               </form>
