@@ -2,6 +2,7 @@ import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AuthCard } from "../components/AuthCard";
 import { API } from "../lib/config";
+import { formatError } from "../lib/errors";
 import { User } from "../types";
 
 async function parseResponse(res: Response) {
@@ -41,7 +42,7 @@ export function RegisterPage({ setToken, setMe }: { setToken: (t: string) => voi
       });
       const data = await parseResponse(res);
       if (!res.ok) {
-        setErr(data?.error?.fieldErrors?.email?.[0] || data?.error || "Register failed");
+        setErr(formatError(data?.error || "Register failed"));
         return;
       }
       if (!data?.token || !data?.user) {

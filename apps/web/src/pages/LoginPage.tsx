@@ -2,6 +2,7 @@ import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AuthCard } from "../components/AuthCard";
 import { API } from "../lib/config";
+import { formatError } from "../lib/errors";
 import { User } from "../types";
 
 async function parseResponse(res: Response) {
@@ -40,7 +41,7 @@ export function LoginPage({ setToken, setMe }: { setToken: (t: string) => void; 
 
       const data = await parseResponse(res);
       if (!res.ok) {
-        setErr(data?.error || "Login failed");
+        setErr(formatError(data?.error || "Login failed"));
         return;
       }
 

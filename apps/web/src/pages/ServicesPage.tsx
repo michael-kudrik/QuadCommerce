@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState, useMemo } from "react";
 import { API } from "../lib/config";
+import { formatError } from "../lib/errors";
 import { Appointment, Service, User } from "../types";
 import { 
   Calendar, 
@@ -77,7 +78,10 @@ export function ServicesPage({ token, me }: { token: string; me: User | null }) 
           priceUsd: Number(fd.get("priceUsd"))
         })
       });
-      if (!res.ok) throw new Error("Failed to create service");
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(formatError(body?.error || "Failed to create service"));
+      }
       setSuccess("Service created successfully!");
       e.currentTarget.reset();
       load();
@@ -103,7 +107,10 @@ export function ServicesPage({ token, me }: { token: string; me: User | null }) 
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ serviceId: bookingServiceId, startAt: startAt.toISOString() })
       });
-      if (!res.ok) throw new Error("Failed to book appointment");
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(formatError(body?.error || "Failed to book appointment"));
+      }
       setSuccess("Appointment booked successfully!");
       setBookingServiceId(null);
       setSelectedTime(null);

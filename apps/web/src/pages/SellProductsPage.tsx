@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState, useRef } from "react";
 import { io } from "socket.io-client";
 import { API } from "../lib/config";
+import { formatError } from "../lib/errors";
 import { Listing, Offer } from "../types";
 import { 
   ShoppingBag, 
@@ -105,7 +106,7 @@ export function SellProductsPage({ token }: { token: string }) {
 
       if (!res.ok) {
         const body = await readJsonSafe(res);
-        throw new Error(body?.error || "Failed to create listing");
+        throw new Error(formatError(body?.error || "Failed to create listing"));
       }
 
       setSuccess("Listing posted successfully!");
