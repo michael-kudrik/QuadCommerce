@@ -53,6 +53,16 @@ interface ChatMessageDoc extends mongoose.Document {
   updatedAt: Date;
 }
 
+interface ChatReadStateDoc extends mongoose.Document {
+  ownerUserId: mongoose.Types.ObjectId;
+  peerUserId: mongoose.Types.ObjectId;
+  readAt: Date;
+  latestIncomingMessageId?: mongoose.Types.ObjectId;
+  latestIncomingMessageAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 interface ListingDoc extends mongoose.Document {
   sellerUserId?: mongoose.Types.ObjectId;
   sellerName: string;
@@ -118,6 +128,19 @@ const chatMessageSchema = new Schema<ChatMessageDoc>(
   { timestamps: true }
 );
 
+const chatReadStateSchema = new Schema<ChatReadStateDoc>(
+  {
+    ownerUserId: { type: Schema.Types.ObjectId, required: true, index: true },
+    peerUserId: { type: Schema.Types.ObjectId, required: true, index: true },
+    readAt: { type: Date, required: true },
+    latestIncomingMessageId: { type: Schema.Types.ObjectId, required: false },
+    latestIncomingMessageAt: { type: Date, required: false }
+  },
+  { timestamps: true }
+);
+
+chatReadStateSchema.index({ ownerUserId: 1, peerUserId: 1 }, { unique: true });
+
 const listingSchema = new Schema<ListingDoc>(
   {
     sellerUserId: { type: Schema.Types.ObjectId, required: false, index: true },
@@ -150,6 +173,7 @@ const User = mongoose.model<UserDoc>("User", userSchema);
 const Service = mongoose.model<ServiceDoc>("Service", serviceSchema);
 const Appointment = mongoose.model<AppointmentDoc>("Appointment", appointmentSchema);
 const ChatMessage = mongoose.model<ChatMessageDoc>("ChatMessage", chatMessageSchema);
+const ChatReadState = mongoose.model<ChatReadStateDoc>("ChatReadState", chatReadStateSchema);
 const Listing = mongoose.model<ListingDoc>("Listing", listingSchema);
 
 const registerSchema = z.object({
@@ -178,15 +202,15 @@ const createListingSchema = z.object({
 });
 
 const createOfferSchema = z.object({
-  bidderName: z.string().min(2),
+  bidderName: z.string().min(2).optional(),
   amount: z.number().positive()
 });
 
 const createServiceSchema = z.object({
   name: z.string().min(2),
   description: z.string().min(5),
-  durationMinutes: z.number().int().min(15).max(480),
-  priceUsd: z.number().nonnegative()
+  durationMinutes: z.coerce.number().int().min(15).max(480),
+  priceUsd: z.coerce.number().nonnegative()
 });
 
 const updateServiceSchema = createServiceSchema.partial().extend({
@@ -222,6 +246,18 @@ const chatPeerParamSchema = z.object({
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, { cors: { origin: "*" } });
+
+io.use(async (socket, next) => {
+  const token = (socket.handshake.auth?.token || socket.handshake.query?.token || "") as string;
+  const subject = token ? verifyTokenSubject(token) : null;
+  if (!subject) return next(new Error("Unauthorized"));
+
+  const user = await User.findById(subject).select({ _id: 1 });
+  if (!user) return next(new Error("Unauthorized"));
+
+  (socket.data as any).userId = user._id.toString();
+  return next();
+});
 
 // --- Middleware ---
 app.use(cors());
@@ -427,21 +463,41 @@ app.post("/api/listings", auth, async (req, res) => {
   return res.status(201).json(serializeListing(doc));
 });
 
-app.post("/api/listings/:id/offers", async (req, res) => {
+app.post("/api/listings/:id/offers", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
   const doc = await Listing.findById(req.params.id);
   if (!doc) return res.status(404).json({ error: "Listing not found" });
   if (doc.status !== "OPEN") return res.status(400).json({ error: "Listing is not open" });
   if (doc.offerWindowEndsAt.getTime() < Date.now()) return res.status(400).json({ error: "Offer window has ended" });
 
+  // Block seller from bidding on their own listing.
+  if (doc.sellerUserId?.toString() === user._id.toString()) {
+    return res.status(403).json({ error: "Sellers cannot bid on their own listing" });
+  }
+
   const parsed = createOfferSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  doc.offers.push({ bidderName: parsed.data.bidderName, amount: parsed.data.amount, createdAt: new Date() } as any);
+  doc.offers.push({ bidderName: user.name, amount: parsed.data.amount, createdAt: new Date() } as any);
   await doc.save();
   await broadcastListings();
 
   const added = doc.offers[doc.offers.length - 1];
   return res.status(201).json({ id: added._id.toString(), bidderName: added.bidderName, amount: added.amount, createdAt: added.createdAt.toISOString() });
+});
+
+app.delete("/api/listings/:id", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
+  const doc = await Listing.findById(req.params.id).select({ _id: 1, sellerUserId: 1 });
+  if (!doc) return res.status(404).json({ error: "Listing not found" });
+
+  if (!doc.sellerUserId || doc.sellerUserId.toString() !== user._id.toString()) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  await Listing.deleteOne({ _id: doc._id });
+  await broadcastListings();
+  return res.json({ ok: true });
 });
 
 app.post("/api/listings/:id/accept-offer", async (req, res) => {
@@ -461,6 +517,14 @@ app.post("/api/listings/:id/accept-offer", async (req, res) => {
 
   await broadcastListings();
   return res.json({ listingId: doc._id.toString(), status: doc.status, acceptedOffer: { id: offer._id.toString(), bidderName: offer.bidderName, amount: offer.amount } });
+});
+
+app.delete("/api/listings/:id", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
+  const deleted = await Listing.findOneAndDelete({ _id: req.params.id, sellerUserId: user._id });
+  if (!deleted) return res.status(404).json({ error: "Listing not found" });
+  await broadcastListings();
+  return res.json({ ok: true });
 });
 
 // Services (CRUD)
@@ -493,8 +557,13 @@ app.patch("/api/services/:id", auth, async (req, res) => {
 
 app.delete("/api/services/:id", auth, async (req, res) => {
   const user = (req as any).user as UserDoc;
-  const deleted = await Service.findOneAndDelete({ _id: req.params.id, ownerId: user._id });
-  if (!deleted) return res.status(404).json({ error: "Service not found" });
+  const existing = await Service.findById(req.params.id).select({ _id: 1, ownerId: 1 });
+  if (!existing) return res.status(404).json({ error: "Service not found" });
+  if (existing.ownerId.toString() !== user._id.toString()) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  await Service.deleteOne({ _id: existing._id });
   return res.json({ ok: true });
 });
 
@@ -605,11 +674,34 @@ app.get("/api/chats/conversations", auth, async (req, res) => {
   const peerUsers = await User.find({ _id: { $in: peers } });
   const peerMap = new Map(peerUsers.map((u) => [u._id.toString(), u]));
 
+  const myReadStates = await ChatReadState.find({ ownerUserId: uid, peerUserId: { $in: peers } });
+  const myReadMap = new Map(myReadStates.map((r) => [r.peerUserId.toString(), r]));
+
+  const peerReadStates = await ChatReadState.find({ ownerUserId: { $in: peers }, peerUserId: uid });
+  const peerReadMap = new Map(peerReadStates.map((r) => [r.ownerUserId.toString(), r]));
+
+  const unreadByPeer: Record<string, number> = {};
+  for (const m of msgs) {
+    if (!m.senderUserId || !m.recipientUserId) continue;
+    const senderId = m.senderUserId.toString();
+    const recipientId = m.recipientUserId.toString();
+    const myId = uid.toString();
+    if (recipientId !== myId) continue;
+    const state = myReadMap.get(senderId);
+    const readAt = state?.readAt?.getTime() ?? 0;
+    if (m.createdAt.getTime() > readAt) {
+      unreadByPeer[senderId] = (unreadByPeer[senderId] || 0) + 1;
+    }
+  }
+
   res.json(
     [...summaries.values()].map((s) => ({
       ...s,
       peerName: peerMap.get(s.peerUserId)?.name || "Unknown",
-      peerEmail: peerMap.get(s.peerUserId)?.email || ""
+      peerEmail: peerMap.get(s.peerUserId)?.email || "",
+      unreadCount: unreadByPeer[s.peerUserId] || 0,
+      myReadAt: myReadMap.get(s.peerUserId)?.readAt?.toISOString() || null,
+      peerReadAt: peerReadMap.get(s.peerUserId)?.readAt?.toISOString() || null
     }))
   );
 });
@@ -691,10 +783,24 @@ app.post("/api/chats/:peerUserId/read", auth, async (req, res) => {
     .sort({ createdAt: -1 })
     .select({ _id: 1, createdAt: 1 });
 
+  const readAt = new Date();
+
+  await ChatReadState.findOneAndUpdate(
+    { ownerUserId: user._id, peerUserId: peer._id },
+    {
+      $set: {
+        readAt,
+        latestIncomingMessageId: latestIncoming?._id,
+        latestIncomingMessageAt: latestIncoming?.createdAt
+      }
+    },
+    { upsert: true, new: true }
+  );
+
   const payload = {
     peerUserId: peer._id.toString(),
     readerUserId: user._id.toString(),
-    readAt: new Date().toISOString(),
+    readAt: readAt.toISOString(),
     latestIncomingMessageId: latestIncoming?._id?.toString() || null,
     latestIncomingMessageAt: latestIncoming?.createdAt?.toISOString() || null
   };
@@ -702,6 +808,32 @@ app.post("/api/chats/:peerUserId/read", auth, async (req, res) => {
   io.to(`user:${peer._id.toString()}`).emit("chat:read", payload);
   io.to(`user:${user._id.toString()}`).emit("chat:read", payload);
   return res.json(payload);
+});
+
+app.get("/api/chats/meta/read-states", auth, async (req, res) => {
+  const user = (req as any).user as UserDoc;
+  const uid = user._id;
+
+  const [myStates, peerStates] = await Promise.all([
+    ChatReadState.find({ ownerUserId: uid }).sort({ updatedAt: -1 }),
+    ChatReadState.find({ peerUserId: uid }).sort({ updatedAt: -1 })
+  ]);
+
+  const mine = myStates.map((s) => ({
+    peerUserId: s.peerUserId.toString(),
+    readAt: s.readAt.toISOString(),
+    latestIncomingMessageId: s.latestIncomingMessageId?.toString() || null,
+    latestIncomingMessageAt: s.latestIncomingMessageAt?.toISOString() || null
+  }));
+
+  const peers = peerStates.map((s) => ({
+    peerUserId: s.ownerUserId.toString(),
+    readAt: s.readAt.toISOString(),
+    latestIncomingMessageId: s.latestIncomingMessageId?.toString() || null,
+    latestIncomingMessageAt: s.latestIncomingMessageAt?.toISOString() || null
+  }));
+
+  return res.json({ mine, peers });
 });
 
 const MONGO_URI = process.env.MONGO_URI ?? "mongodb://127.0.0.1:27017/quadcommerce";
@@ -745,18 +877,18 @@ async function start() {
 }
 
 io.on("connection", (socket) => {
-  const token = (socket.handshake.auth?.token || socket.handshake.query?.token || "") as string;
-  if (token) {
-    const subject = verifyTokenSubject(token);
-    if (subject) {
-      socket.join(`user:${subject}`);
-    }
+  const subject = (socket.data as any).userId as string | undefined;
+  if (!subject) {
+    socket.disconnect(true);
+    return;
   }
-  socket.emit("connected", { ok: true });
+
+  socket.join(`user:${subject}`);
+  socket.emit("connected", { ok: true, userId: subject });
 });
 
 // --- Global Error Handler ---
-app.use((err: any, _req: express.Response, res: express.Response, _next: express.NextFunction) => {
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error("Unhandled error:", err);
   res.status(500).json({ error: "Internal Server Error", message: err.message });
 });

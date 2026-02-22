@@ -66,7 +66,8 @@ export function ServicesPage({ token, me }: { token: string; me: User | null }) 
     setSuccess("");
     setIsSubmitting(true);
 
-    const fd = new FormData(e.currentTarget);
+    const form = e.currentTarget;
+    const fd = new FormData(form);
     try {
       const res = await fetch(`${API}/services`, {
         method: "POST",
@@ -83,12 +84,38 @@ export function ServicesPage({ token, me }: { token: string; me: User | null }) 
         throw new Error(formatError(body?.error || "Failed to create service"));
       }
       setSuccess("Service created successfully!");
-      e.currentTarget.reset();
+      form.reset();
       load();
     } catch (err: any) {
       setError(err.message);
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function deleteService(serviceId: string) {
+    if (me?.role !== "businessOwner") return;
+    if (!confirm("Delete this service? This cannot be undone.")) return;
+
+    setError("");
+    setSuccess("");
+    try {
+      const res = await fetch(`${API}/services/${serviceId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(formatError(body?.error || "Failed to delete service"));
+      }
+      if (bookingServiceId === serviceId) {
+        setBookingServiceId(null);
+        setSelectedTime(null);
+      }
+      setSuccess("Service deleted.");
+      load();
+    } catch (err: any) {
+      setError(err.message);
     }
   }
 
@@ -147,11 +174,11 @@ export function ServicesPage({ token, me }: { token: string; me: User | null }) 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-sm font-semibold text-[var(--muted)] ml-1">Duration (min)</label>
-                  <input className="input-premium" name="durationMinutes" type="number" defaultValue="60" />
+                  <input className="input-premium" name="durationMinutes" type="number" min={15} max={480} required defaultValue="60" />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-sm font-semibold text-[var(--muted)] ml-1">Price ($)</label>
-                  <input className="input-premium" name="priceUsd" type="number" step="0.01" defaultValue="25" />
+                  <input className="input-premium" name="priceUsd" type="number" min={0} step="0.01" required defaultValue="25" />
                 </div>
               </div>
               <button className="btn-primary w-full mt-2 flex items-center justify-center gap-2" type="submit" disabled={isSubmitting}>
@@ -187,9 +214,19 @@ export function ServicesPage({ token, me }: { token: string; me: User | null }) 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {services.map((s) => (
               <div key={s.id} className={`card-premium p-6 group transition-all duration-300 ${bookingServiceId === s.id ? 'ring-2 ring-[var(--accent)] border-transparent' : ''}`}>
-                <div className="flex justify-between items-start mb-4">
+                <div className="flex justify-between items-start mb-4 gap-2">
                   <h3 className="text-lg font-bold group-hover:text-[var(--accent)] transition-colors text-[var(--text)]">{s.name}</h3>
-                  <div className="text-xl font-black text-emerald-500 shrink-0">${s.priceUsd.toFixed(2)}</div>
+                  <div className="flex flex-col items-end gap-2 shrink-0">
+                    <div className="text-xl font-black text-emerald-500">${s.priceUsd.toFixed(2)}</div>
+                    {me?.role === "businessOwner" && (
+                      <button
+                        onClick={() => deleteService(s.id)}
+                        className="px-2.5 py-1 rounded-lg border border-red-200 text-red-600 text-[10px] font-bold hover:bg-red-50"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
                 </div>
                 
                 <p className="text-[var(--muted)] text-sm mb-6 line-clamp-3">{s.description}</p>
