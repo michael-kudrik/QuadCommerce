@@ -13,7 +13,7 @@ import {
   ChevronRight,
   MapPin,
   CalendarCheck,
-  ChevronLeft
+  Image as ImageIcon
 } from "lucide-react";
 
 export function ServicesPage({ token, me }: { token: string; me: User | null }) {
@@ -94,7 +94,6 @@ export function ServicesPage({ token, me }: { token: string; me: User | null }) 
   }
 
   async function deleteService(serviceId: string) {
-    if (me?.role !== "businessOwner") return;
     if (!confirm("Delete this service? This cannot be undone.")) return;
 
     setError("");
@@ -214,11 +213,21 @@ export function ServicesPage({ token, me }: { token: string; me: User | null }) 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {services.map((s) => (
               <div key={s.id} className={`card-premium p-6 group transition-all duration-300 ${bookingServiceId === s.id ? 'ring-2 ring-[var(--accent)] border-transparent' : ''}`}>
+                <div className="relative mb-4 h-40 rounded-xl overflow-hidden bg-[var(--chip)] border border-[var(--border)]">
+                  {s.imageUrl ? (
+                    <img src={s.imageUrl} alt={s.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-[var(--muted)]">
+                      <ImageIcon size={36} />
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex justify-between items-start mb-4 gap-2">
                   <h3 className="text-lg font-bold group-hover:text-[var(--accent)] transition-colors text-[var(--text)]">{s.name}</h3>
                   <div className="flex flex-col items-end gap-2 shrink-0">
                     <div className="text-xl font-black text-emerald-500">${s.priceUsd.toFixed(2)}</div>
-                    {me?.role === "businessOwner" && (
+                    {Boolean(me?.id && s.ownerId === me.id) && (
                       <button
                         onClick={() => deleteService(s.id)}
                         className="px-2.5 py-1 rounded-lg border border-red-200 text-red-600 text-[10px] font-bold hover:bg-red-50"
